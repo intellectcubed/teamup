@@ -1,0 +1,63 @@
+Event:
+
+{
+  "id": "1079708919",
+  "series_id": "None",
+  "remote_id": "None",
+  "subcalendar_id": 10358690,
+  "subcalendar_ids": [
+    10358690
+  ],
+  "all_day": "False",
+  "rrule": "",
+  "title": "Unstaffed Test Case 1 (F)",
+  "who": "",
+  "location": "",
+  "notes": "None",
+  "version": "2a750c6bfbf1",
+  "readonly": "False",
+  "tz": "None",
+  "attachments": [],
+  "start_dt": "2021-12-01T18:00:00-05:00",
+  "end_dt": "2021-12-02T01:00:00-05:00",
+  "ristart_dt": "None",
+  "rsstart_dt": "None",
+  "creation_dt": "2022-01-01T18:45:01-05:00",
+  "update_dt": "None",
+  "delete_dt": "None"
+}
+
+
+Coverage Offer:
+
+{
+  "id": "1079708939",
+  "series_id": "None",
+  "remote_id": "None",
+  "subcalendar_id": 10363404,
+  "subcalendar_ids": [
+    10363404
+  ],
+  "all_day": "False",
+  "rrule": "",
+  "title": "Test Case 2",
+  "who": "member1",
+  "location": "",
+  "notes": "None",
+  "version": "3a57025da6fc",
+  "readonly": "False",
+  "tz": "None",
+  "attachments": [],
+  "start_dt": "2021-12-02T18:00:00-05:00",
+  "end_dt": "2021-12-03T01:00:00-05:00",
+  "ristart_dt": "None",
+  "rsstart_dt": "None",
+  "creation_dt": "2022-01-01T18:45:05-05:00",
+  "update_dt": "None",
+  "delete_dt": "None",
+  "custom": {
+    "coverage_level": [
+      "crew_chief"
+    ]
+  }
+}

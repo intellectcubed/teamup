@@ -5,6 +5,7 @@ import datetime
 import sys
 import os
 import calendar
+import time
 
 api_key = os.environ['TEAMUP_API_KEY']
 
@@ -19,9 +20,21 @@ tango_offered_calendar = os.environ['TANGO_OFFERED_CALENDAR']
 OUTPUT_FMT_YMDHM = '%m/%d/%Y %H:%M'
 API_DATE_FORMAT_YMD = '%Y-%m-%d'
 
+COVERAGE_LEVEL_DESCR_MAP = {
+    'crew_chief': 'Crew Chief',
+    'emt': 'EMT over 18',
+    'emt_under_18_': 'EMT under 18',
+    'driver': 'Driver'
+} 
 
-def get_date_hour_key(dt):
-    return dt.strftime('%Y%m%d%H')
+BRIEF_COVERAGE_DESCR_MAP = {
+    'crew_chief': 'CC',
+    'emt': 'EMT > 18',
+    'emt_under_18_': 'EMT < 18',
+    'driver': 'Driver'
+} 
+
+HOUR_KEY_FMT = '%Y%m%d%H'
 
 
 def get_events(start_dt, end_dt, subcalendar_id):
@@ -49,7 +62,7 @@ def get_coverage_offered(sub_calendar_id, start_dt, end_dt):
         for hour in range(num_hours):
             dt = datetime.timedelta(hours=hour)
             coverage_hour = start_date + dt
-            date_hour_key = get_date_hour_key(coverage_hour)
+            date_hour_key = date_to_key(coverage_hour)
             coverage_offered[date_hour_key] = coverage_offered.get(date_hour_key, [])
             coverage_offered[date_hour_key].append(coverage)
 
@@ -77,7 +90,7 @@ def check_events(required_subcalendar_id, offered_subcalendar_id, start_dt, end_
         if len(warnings) > 0:
             shift_warnings.append({'shift': required, 'errors': [], 'warnings': warnings})
 
-    return (shift_errors, shift_warnings)
+    return (requireds, coverages, shift_errors, shift_warnings)
 
 def check_staffing(required_subcalendar_id, required_coverage, coverage_events):
     """
@@ -92,7 +105,7 @@ def check_staffing(required_subcalendar_id, required_coverage, coverage_events):
     for hour in range(hours):
         dt = datetime.timedelta(hours=hour)
         coverage_hour = start_date + dt
-        date_hour_key = get_date_hour_key(coverage_hour)
+        date_hour_key = date_to_key(coverage_hour)
         coverage_events_for_hour = coverage_events.get(date_hour_key, [])
         missing, warnings = is_hour_staffed(required_subcalendar_id, coverage_events_for_hour)
 
@@ -102,43 +115,62 @@ def check_staffing(required_subcalendar_id, required_coverage, coverage_events):
         if len(warnings) > 0:
             shift_warnings[date_hour_key] = warnings
 
+    # for key, value in crew_missing.items():
+    #     print('{} - {}'.format(key, value))
+
     missing_ranges = consolidate_hours(crew_missing)
     return (missing_ranges, shift_warnings)
 
 def key_to_date(key):
-    format1 = '%Y%m%d%H'
-    return datetime.datetime.strptime(key, format1)
+    return datetime.datetime.strptime(key, HOUR_KEY_FMT)
+
+def date_to_key(dt):
+    return dt.strftime(HOUR_KEY_FMT)
 
 def add_hour_to_key(key):
     dt = key_to_date(key)
     delta = datetime.timedelta(hours=1)
     return dt + delta
 
+STAFFING_ERROR_SORT_ORDER = ['Crew Chief', 'Driver or EMT over 18']
+
 def consolidate_hours(crew_missing):
+    # First, we expand the errors into their own keys in the dict.
+    missing_cats = dict()
+
+    for key, value in crew_missing.items():
+        for missing in value:
+            missing_cats[missing] = missing_cats.get(missing, [])
+            missing_cats[missing].append(key)
+
+    for key, value in missing_cats.items():
+        missing_dates = value
+        date_sets = []
+        sub_list =[]
+        for date in missing_dates:
+            if len(sub_list) == 0:
+                sub_list.append(date)
+            elif add_hour_to_key(sub_list[-1]) == key_to_date(date):
+                sub_list.append(date)
+            else:
+                date_sets.append(sub_list[:])
+                sub_list = []
+        if len(sub_list) > 0:
+            date_sets.append(sub_list[:])
+
+        missing_cats[key] = date_sets
+
     missing_ranges = []
-    min_date = None
-    max_date = None
-    errors = None
-    for key in sorted(crew_missing.keys()):
-        if min_date is None or key < min_date:
-            min_date = key
-        if max_date is None or key > max_date:
-            max_date = key
-        
-        if errors is None:
-            errors = crew_missing[key]
+    for key in STAFFING_ERROR_SORT_ORDER:
+        if key in missing_cats:
+            date_sets = missing_cats[key]
+            for date_set in date_sets:
+                start_date = key_to_date(date_set[0])
+                end_date = add_hour_to_key(date_set[-1])
+                hours = get_hours(start_date, end_date)
+                missing_ranges.append({'start_dt': start_date.strftime(OUTPUT_FMT_YMDHM), 'end_dt': end_date.strftime(OUTPUT_FMT_YMDHM), 'hours': hours, 'error': key})
 
-        date_errors = crew_missing[key]
-        if date_errors != errors:
-            missing_ranges.append({'start_dt': key_to_date(min_date).strftime(OUTPUT_FMT_YMDHM), 'end_dt': add_hour_to_key(max_date).strftime(OUTPUT_FMT_YMDHM), 'errors': errors})
-            errors = None
-            min_date = None
-            max_date = None
-
-    if min_date is not None:
-        missing_ranges.append({'start_dt': key_to_date(min_date).strftime(OUTPUT_FMT_YMDHM), 'end_dt': add_hour_to_key(max_date).strftime(OUTPUT_FMT_YMDHM), 'errors': errors})
-
-    return missing_ranges            
+    return missing_ranges
 
 
 def is_hour_staffed(subcalendar_id, coverage_events_for_hour):
@@ -253,28 +285,222 @@ def create_shift_name(shift):
     return '{} {}'.format(calendar.day_name[start_date.weekday()], period_map.get(period))
 
 
-def debug_errors(shift_errors):
+def report_errors(shift_errors):
     if len(shift_errors) == 0:
         return
     print('The folowing shifts have errors:')
     for shift in shift_errors:
         print('Shift: ({}) {} - {}'.format(create_shift_name(shift['shift']), date_simple_format(shift['shift']['start_dt']), date_simple_format(shift['shift']['end_dt'])))
         for error in shift['errors']:
-            err_start = error['start_dt']
-            err_end = error['end_dt']
-
-            start_date = datetime.datetime.strptime(err_start, OUTPUT_FMT_YMDHM)
-            end_date = datetime.datetime.strptime(err_end, OUTPUT_FMT_YMDHM)
-
-            for item in error['errors']:
-                print('  {} - {} ({} hours): {}'.format(err_start, err_end, get_hours(start_date, end_date), item))
+            print('  {} - {} ({} hours): {}'.format(error['start_dt'], error['end_dt'], error['hours'], error['error']))
         print("") 
+
+
+def events_to_map(shifts):
+    """
+    Convert a list of shifts to a map of shifts
+    """
+    shift_map = {}
+    for shift in shifts:
+        start_date = shift['start_dt']
+        if start_date in shift_map:
+            shift_map[start_date].append(shift)
+        else:
+            shift_map[start_date] = [shift]
+    return shift_map
+
+
+def expand_event(event):
+    """
+    Given an event, expand it into a list of events
+    return key, [event]
+    """
+    # key = hour
+    # value = event
+
+    expanded_events = {}
+    num_hours = get_hours_parse(event['start_dt'], event['end_dt']) # for how many hours is this coverage offered?
+    start_date = dateutil.parser.isoparse(event['start_dt'])
+    for hour in range(num_hours):
+        dt = datetime.timedelta(hours=hour)
+        coverage_hour = start_date + dt
+        date_hour_key = date_to_key(coverage_hour)
+        expanded_events[date_hour_key] = expanded_events.get(date_hour_key, [])
+        expanded_events[date_hour_key].append(event)
+    
+    return expanded_events
+
+DEBUG_OUTPUT = False
+
+def report_shifts(coverage_required_calendar, coverage_offered_calendar, search_start, search_end, errors):
+    debug_ts = int(time.time())
+
+    shifts = get_events(search_start, search_end, coverage_required_calendar)
+    coverages = get_events(search_start, search_end, coverage_offered_calendar)
+
+    shift_map = events_to_map(shifts['events'])
+    shift_keys = sorted(shift_map.keys())
+
+    coverage_map = events_to_map(coverages['events'])
+    coverage_keys = sorted(coverage_map.keys())
+
+    # key = date, value = {shift, [coverage]}
+    merged_shift_map = {}
+
+    for shift_key in shift_keys:
+        shifts_ = shift_map[shift_key]
+        for shift in shifts_:
+            shift_date = shift['start_dt']
+            covers_for_shift = {}
+            for coverage_key in coverage_keys:
+                coverages_ = coverage_map[coverage_key]
+                for coverage in coverages_:
+                    if coverage_key >= shift_key and coverage_key <= shift['end_dt']:
+                        events_by_hour = expand_event(coverage)
+                        for hour_key, events in events_by_hour.items():
+                            covers_for_shift[hour_key] = covers_for_shift.get(hour_key, [])
+                            covers_for_shift[hour_key].extend(events)
+            merged_shift_map[shift_date] = {'shift': shift, 'coverage': covers_for_shift}
+
+    # For every hour, sort the coverages: by coverage level, then by name
+    for shift_date, shift_and_coverage in merged_shift_map.items():
+        shift = shift_and_coverage['shift']
+        coverage = shift_and_coverage['coverage']
+        for hour_key, coverages in coverage.items():
+            coverages.sort(key=lambda x: (x['custom']['coverage_level'][0], x['who']))
+            coverage[hour_key] = coverages
+
+    if DEBUG_OUTPUT:
+        print('+++++')
+        with open('/Users/gnowakow/Downloads/shift_map_{}.json'.format(debug_ts), 'w') as f:
+            f.write(json.dumps(merged_shift_map, indent=4, sort_keys=True))
+        print('+++++')
+
+    """
+    merged_shift_map is a map containing the following: 
+    {
+        shift_start_date (2022-01-08T11:00:00-05:00): {
+            shift: {...shift attributes...},
+            coverage: {
+                hour_key (2022010812): [
+                    {...coverage attributes...},
+                    {...coverage attributes...},
+                ]
+            }
+        }
+    }
+    
+    """
+
+    final_report_map = collapse_into_like_shifts(merged_shift_map)
+
+    if DEBUG_OUTPUT:
+        print('+++++')
+        with open('/Users/gnowakow/Downloads/final_report_map_{}.json'.format(debug_ts), 'w') as f:
+            f.write(json.dumps(final_report_map, indent=4, sort_keys=True))
+        print('Printed final report map')
+        print('+++++')
+
+    for shift_date, shift_and_coverage in final_report_map.items():
+        shift = shift_and_coverage['shift']
+        coverage = shift_and_coverage['coverage']
+        print('Shift: ({}) {} - {}'.format(create_shift_name(shift), date_simple_format(shift['start_dt']), date_simple_format(shift['end_dt'])))
+        for hour_coverage in coverage:
+            print('  {} - {} ({} hours): {}'.format(hour_coverage['start_dt'], hour_coverage['end_dt'], get_hours(key_to_date(hour_coverage['start_dt']), key_to_date(hour_coverage['end_dt'])), hour_coverage['who']))
+        print("")
+
+def collapse_into_like_shifts(merged_shift_map):
+    """
+    Given a map of shifts, collapse them into like shifts
+    like shifts are consecutive shifts that have the same people working
+    """
+    final_report_map = {}
+    # Collapse into like shifts
+    for shift_date, shift_and_coverage in merged_shift_map.items():
+        shift = shift_and_coverage['shift']
+        coverage_by_hour = shift_and_coverage['coverage']
+
+        collapsed_coverages = []
+
+        previous_member_names = None
+        start_hour = None
+        previous_hour = None
+        for hour_key in sorted(coverage_by_hour.keys()):
+            coverage_offers_for_hour = coverage_by_hour[hour_key] # coverage_offers is a list of coverages for this hour (sorted by coverage level, name)
+            if are_keys_consecutive(previous_hour, hour_key) and are_names_equal(previous_member_names, coverage_offers_for_hour):
+                previous_hour = hour_key
+            else:
+                if previous_member_names is not None:
+                    collapsed_coverages.append({'start_dt': start_hour, 'end_dt': date_to_key(add_hour_to_key(previous_hour)), 'who': previous_member_names})
+                previous_member_names = concat_offer_names(coverage_offers_for_hour)
+                start_hour = hour_key
+                previous_hour = hour_key
+
+        if previous_member_names is not None:
+            collapsed_coverages.append({'start_dt': start_hour, 'end_dt': date_to_key(add_hour_to_key(previous_hour)), 'who': previous_member_names})
+
+        final_report_map[shift_date] = {'shift': shift, 'coverage': collapsed_coverages}
+    return final_report_map
+
+
+def are_keys_consecutive(previous_hour, hour):
+    if previous_hour is None:
+        return False
+
+    prev_date = datetime.datetime.strptime(previous_hour, HOUR_KEY_FMT)
+    dt = datetime.timedelta(hours=1)
+    hour_after_prev = prev_date + dt
+
+    return datetime.datetime.strftime(hour_after_prev, HOUR_KEY_FMT) == hour        
+
+def concat_offer_names(coverages):
+    names = []
+    for coverage in coverages:
+        names.append('{} ({})'.format(coverage['who'], BRIEF_COVERAGE_DESCR_MAP.get(coverage['custom']['coverage_level'][0])))
+    return ', '.join(names)
+
+def are_names_equal(previous_names, coverages):
+    if previous_names is None:
+        return False
+
+    names = concat_offer_names(coverages)
+    return previous_names == names
+
+#Deprecated    
+def report_shifts2(coverage_required_calendar, coverage_offered_calendar, search_start, search_end, errors):
+    shifts = get_events(search_start, search_end, coverage_required_calendar)
+    coverages = get_events(search_start, search_end, coverage_offered_calendar)
+
+    shift_map = events_to_map(shifts['events'])
+    shift_keys = sorted(shift_map.keys())
+
+    coverage_map = events_to_map(coverages['events'])
+    coverage_keys = sorted(coverage_map.keys())
+
+    # key = date, value = {shift, [coverage]}
+    merged_shift_map = {}
+
+    for shift_key in shift_keys:
+        shifts_ = shift_map[shift_key]
+        for shift in shifts_:
+            shift_date = shift['start_dt']
+            covers_for_shift = []
+            # print({'shift_start': shift_key, 'shift_end': shift['end_dt']})
+            for coverage_key in coverage_keys:
+                coverages_ = coverage_map[coverage_key]
+                for coverage in coverages_:
+                    if coverage_key >= shift_key and coverage_key <= shift['end_dt']:
+                        # print({'start_dt': coverage_key, 'end_dt': coverage['end_dt'], 'who': coverage['who'], 'coverage_level': coverage['custom']['coverage_level'][0]})
+                        covers_for_shift.append(coverage)
+            print("")
+            merged_shift_map[shift_date] = {'shift': shift, 'coverage': covers_for_shift}
+
 
 def debug_shift(start_dt, end_dt):
     requireds = get_coverage_required(coverage_required_calendar, start_dt, end_dt)
     coverages = get_coverage_offered(coverage_offered_calendar, start_dt, end_dt)
 
-    shift_errors, warnings = check_events('2021-12-01', '2021-12-31')
+    requireds, coverages, shift_errors, warnings = check_events('2021-12-01', '2021-12-31')
 
     # for required in requireds['events']:
     print(coverages)
@@ -295,15 +521,16 @@ if __name__ == '__main__':
     search_start = datetime.datetime.now().strftime(API_DATE_FORMAT_YMD)
     search_end = (datetime.datetime.now() + datetime.timedelta(days=5)).strftime(API_DATE_FORMAT_YMD)
     print('Searching from {} to {}'.format(search_start, search_end))
-    errors, warnings = check_events(coverage_required_calendar, coverage_offered_calendar, search_start, search_end)
+    requireds, coverages, errors, warnings = check_events(coverage_required_calendar, coverage_offered_calendar, search_start, search_end)
     print('====================================')
     print('Duty Shifts Found: {} errors and {} warnings'.format(len(errors), len(warnings)))
-    debug_errors(errors)
+    # report_errors(errors)
+    report_shifts(coverage_required_calendar, coverage_offered_calendar, search_start, search_end, errors)
 
-    errors, warnings = check_events(tango_required_calendar, tango_offered_calendar, search_start, search_end)
+    requireds, coverages, errors, warnings = check_events(tango_required_calendar, tango_offered_calendar, search_start, search_end)
     print('====================================')
     print('Tango Shifts Found: {} errors and {} warnings'.format(len(errors), len(warnings)))
-    debug_errors(errors)
+    report_errors(errors)
     print('====================================')
 
 

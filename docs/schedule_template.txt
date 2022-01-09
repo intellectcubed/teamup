@@ -1,0 +1,25 @@
+<html><head><style>table, th, td {
+  border: 1px solid black;
+  border-collapse: collapse;
+  font-size: 15px;
+  font-family: Trebuchet MS, sans-serif;
+}
+
+td {
+  padding: 5px;
+}
+
+.cell_hour {
+  text-align: center;
+}
+
+th { background: #3630a3; color: white; text-align:left; padding:5px;}
+
+
+body {
+   color: black;
+  font-family: Trebuchet MS, sans-serif;
+}
+</style></head><body>
+<!-- Content -->
+</body></html>

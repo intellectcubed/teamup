@@ -18,6 +18,7 @@ tango_required_calendar = os.environ['TANGO_REQUIRED_CALENDAR']
 tango_offered_calendar = os.environ['TANGO_OFFERED_CALENDAR']
 
 OUTPUT_FMT_YMDHM = '%m/%d/%Y %H:%M'
+OUTPUT_FMT_YMD = '%B %d, %Y'
 API_DATE_FORMAT_YMD = '%Y-%m-%d'
 
 COVERAGE_LEVEL_DESCR_MAP = {
@@ -245,15 +246,6 @@ def translate_coverage(coverage_level):
     else:
         return coverage_level
 
-def debug_show():
-    coverage = get_coverage_offered(coverage_offered_calendar, '2021-12-01', '2021-12-31')
-    for key, value in coverage.items() :
-        offer = key
-        for item in value:
-            offer += '({})'.format(translate_coverage(item['custom']['coverage_level'][0]))
-        print(offer)
-
-
 def format_error_report(shift_errors):
     """
     Format the error report for Slack
@@ -282,7 +274,11 @@ def create_shift_name(shift):
                         4: 'Noon',
                         5: 'Evening',
                         6: 'Night'};
-    return '{} {}'.format(calendar.day_name[start_date.weekday()], period_map.get(period))
+    return '{} ({} shift) {}'.format(
+        calendar.day_name[start_date.weekday()], 
+        period_map.get(period),
+        start_date.strftime(OUTPUT_FMT_YMD)
+        )
 
 
 def report_errors(shift_errors):
@@ -350,17 +346,21 @@ def report_shifts(coverage_required_calendar, coverage_offered_calendar, search_
     for shift_key in shift_keys:
         shifts_ = shift_map[shift_key]
         for shift in shifts_:
+            # key = member_name, hours = {string, int}
+            shift_summary_map = {}
             shift_date = shift['start_dt']
             covers_for_shift = {}
             for coverage_key in coverage_keys:
                 coverages_ = coverage_map[coverage_key]
                 for coverage in coverages_:
+                    #TODO: If coverage offer started within the shift, but end is beyond end of shift, it will be ignored.  Should be counted!!
                     if coverage_key >= shift_key and coverage_key <= shift['end_dt']:
+                        shift_summary_map[coverage['who']] = shift_summary_map.get(coverage['who'], 0) + get_hours_parse(coverage['start_dt'], coverage['end_dt'])
                         events_by_hour = expand_event(coverage)
                         for hour_key, events in events_by_hour.items():
                             covers_for_shift[hour_key] = covers_for_shift.get(hour_key, [])
                             covers_for_shift[hour_key].extend(events)
-            merged_shift_map[shift_date] = {'shift': shift, 'coverage': covers_for_shift}
+            merged_shift_map[shift_date] = {'shift': shift, 'coverage': covers_for_shift, 'shift-summary': shift_summary_map}
 
     # For every hour, sort the coverages: by coverage level, then by name
     for shift_date, shift_and_coverage in merged_shift_map.items():
@@ -401,6 +401,9 @@ def report_shifts(coverage_required_calendar, coverage_offered_calendar, search_
         print('Printed final report map')
         print('+++++')
 
+    return final_report_map
+
+def simple_shift_formatting(final_report_map):
     for shift_date, shift_and_coverage in final_report_map.items():
         shift = shift_and_coverage['shift']
         coverage = shift_and_coverage['coverage']
@@ -408,6 +411,58 @@ def report_shifts(coverage_required_calendar, coverage_offered_calendar, search_
         for hour_coverage in coverage:
             print('  {} - {} ({} hours): {}'.format(hour_coverage['start_dt'], hour_coverage['end_dt'], get_hours(key_to_date(hour_coverage['start_dt']), key_to_date(hour_coverage['end_dt'])), hour_coverage['who']))
         print("")
+
+# Might consider this in the future: https://ptable.readthedocs.io/en/latest/tutorial.html  (at least for debugging/printing interactively ascii tables)
+def format_html_shift_report(final_report_map):
+    for shift_date, shift_and_coverage in final_report_map.items():
+        shift = shift_and_coverage['shift']
+        coverage = shift_and_coverage['coverage']
+        summary = shift_and_coverage['shift-summary']
+
+        max_members = -1
+        for coverage_span in coverage:
+            max_members = max(max_members, len(coverage_span['who'].split(',')))
+
+        shift_content = '<h2>{}</h2>'.format(create_shift_name(shift))
+        shift_table = '<table>'
+        shift_table += '<tr><th>Start</th><th>End</th><th>Hours</th>{}</tr>'.format(''.join(['<th>Member</th>' for x in range(max_members)]))
+        for coverage_span in coverage:
+            shift_row = '<tr><td>{}</td><td>{}</td><td class="cell_hour">{}</td>'.format(
+                key_to_date(coverage_span['start_dt']).strftime(OUTPUT_FMT_YMDHM), 
+                key_to_date(coverage_span['end_dt']).strftime(OUTPUT_FMT_YMDHM),
+                get_hours(key_to_date(coverage_span['start_dt']), key_to_date(coverage_span['end_dt']))
+                )
+            shift_row += ''.join(['<td>{}</td>'.format(x) for x in coverage_span['who'].split(',')])
+            # TODO: Fill in blank cells with empty strings here
+            num_blank_cells = max_members - len(coverage_span['who'].split(','))
+            shift_row += ''.join(['<td></td>' for x in range(num_blank_cells)])
+            shift_row += '</tr>'
+            shift_table += shift_row
+
+        shift_table += '</table>'
+        shift_content += shift_table
+
+        shift_content += '<h3>Shift Summary</h3>'
+        shift_content += build_shift_summary_table(summary)
+
+        template = None
+        with open('/Users/gnowakow/Projects/EMS/TeamUp/docs/schedule_template.txt'.format(shift_date), 'r') as f:
+            template = f.read()
+
+        html_file = template.replace('<!-- Content -->', shift_content)
+
+        output_filename = '/Users/gnowakow/Downloads/sample_report_{}.html'.format(date_to_key(dateutil.parser.isoparse(shift['start_dt'])))
+        with open(output_filename, 'w') as f:
+            f.write(html_file)
+
+
+def build_shift_summary_table(summary) -> str:
+    summary_table = '<table>'
+    summary_table += '<tr><th>Member</th><th>Total Hours</th></tr>'
+    for summary_key, summary_value in summary.items():
+        summary_table += '<tr><td>{}</td><td>{}</td></tr>'.format(summary_key, summary_value)
+    summary_table += '</table>'
+    return summary_table
 
 def collapse_into_like_shifts(merged_shift_map):
     """
@@ -439,7 +494,7 @@ def collapse_into_like_shifts(merged_shift_map):
         if previous_member_names is not None:
             collapsed_coverages.append({'start_dt': start_hour, 'end_dt': date_to_key(add_hour_to_key(previous_hour)), 'who': previous_member_names})
 
-        final_report_map[shift_date] = {'shift': shift, 'coverage': collapsed_coverages}
+        final_report_map[shift_date] = {'shift': shift, 'coverage': collapsed_coverages, 'shift-summary': shift_and_coverage['shift-summary']}
     return final_report_map
 
 
@@ -466,56 +521,6 @@ def are_names_equal(previous_names, coverages):
     names = concat_offer_names(coverages)
     return previous_names == names
 
-#Deprecated    
-def report_shifts2(coverage_required_calendar, coverage_offered_calendar, search_start, search_end, errors):
-    shifts = get_events(search_start, search_end, coverage_required_calendar)
-    coverages = get_events(search_start, search_end, coverage_offered_calendar)
-
-    shift_map = events_to_map(shifts['events'])
-    shift_keys = sorted(shift_map.keys())
-
-    coverage_map = events_to_map(coverages['events'])
-    coverage_keys = sorted(coverage_map.keys())
-
-    # key = date, value = {shift, [coverage]}
-    merged_shift_map = {}
-
-    for shift_key in shift_keys:
-        shifts_ = shift_map[shift_key]
-        for shift in shifts_:
-            shift_date = shift['start_dt']
-            covers_for_shift = []
-            # print({'shift_start': shift_key, 'shift_end': shift['end_dt']})
-            for coverage_key in coverage_keys:
-                coverages_ = coverage_map[coverage_key]
-                for coverage in coverages_:
-                    if coverage_key >= shift_key and coverage_key <= shift['end_dt']:
-                        # print({'start_dt': coverage_key, 'end_dt': coverage['end_dt'], 'who': coverage['who'], 'coverage_level': coverage['custom']['coverage_level'][0]})
-                        covers_for_shift.append(coverage)
-            print("")
-            merged_shift_map[shift_date] = {'shift': shift, 'coverage': covers_for_shift}
-
-
-def debug_shift(start_dt, end_dt):
-    requireds = get_coverage_required(coverage_required_calendar, start_dt, end_dt)
-    coverages = get_coverage_offered(coverage_offered_calendar, start_dt, end_dt)
-
-    requireds, coverages, shift_errors, warnings = check_events('2021-12-01', '2021-12-31')
-
-    # for required in requireds['events']:
-    print(coverages)
-
-    for key, value in coverages.items():
-        print('{}'.format(key))
-
-
-    # coverage = get_coverage_offered(coverage_offered_calendar, start_dt, end_dt)
-    # for key, value in coverage.items() :
-    #     offer = key
-    #     for item in value:
-    #         offer += '({})'.format(item['custom']['coverage_level'][0])
-    #     print(offer)
-
 
 if __name__ == '__main__':
     search_start = datetime.datetime.now().strftime(API_DATE_FORMAT_YMD)
@@ -524,8 +529,11 @@ if __name__ == '__main__':
     requireds, coverages, errors, warnings = check_events(coverage_required_calendar, coverage_offered_calendar, search_start, search_end)
     print('====================================')
     print('Duty Shifts Found: {} errors and {} warnings'.format(len(errors), len(warnings)))
-    # report_errors(errors)
-    report_shifts(coverage_required_calendar, coverage_offered_calendar, search_start, search_end, errors)
+    report_errors(errors)
+
+    final_report_map = report_shifts(coverage_required_calendar, coverage_offered_calendar, search_start, search_end, errors)
+    format_html_shift_report(final_report_map)
+    # simple_shift_formatting(final_report_map)
 
     requireds, coverages, errors, warnings = check_events(tango_required_calendar, tango_offered_calendar, search_start, search_end)
     print('====================================')
@@ -534,9 +542,4 @@ if __name__ == '__main__':
     print('====================================')
 
 
-    # debug_shift('2021-12-01', '2021-12-31')
-
-    # print('Here is the api key: |{}|'.format(api_key))
-    # coverages = get_events('2021-12-01', '2021-12-31', coverage_offered_calendar)
-    # print(coverages)
 

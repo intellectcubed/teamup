@@ -31,3 +31,6 @@ start_dt,end_dt,who,coverage_level,title
 2021-12-10T18:00:00-05:00,2021-12-10T23:00:00-05:00,member1,crew_chief,Test Case 11
 2021-12-11T00:00:00-05:00,2021-12-11T01:00:00-05:00,member2,crew_chief,Test Case 11
 2021-12-10T18:00:00-05:00,2021-12-11T01:00:00-05:00,member4,emt,Test Case 11
+2021-12-12T18:00:00-05:00,2021-12-13T00:00:00-05:00,member1,crew_chief,Test Case 12
+2021-12-13T00:00:00-05:00,2021-12-13T06:00:00-05:00,member3,crew_chief,Test Case 12
+2021-12-12T18:00:00-05:00,2021-12-13T06:00:00-05:00,member2,driver,Test Case 12

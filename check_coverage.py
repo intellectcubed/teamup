@@ -6,20 +6,25 @@ import sys
 import os
 import calendar
 import time
+import emails
 
 api_key = os.environ['TEAMUP_API_KEY']
 
 url = 'https://api.teamup.com'
-collaborative_calendar_key = os.environ['COLLABORATIVE_CALENDAR_KEY']
+collaborative_calendar_key = os.environ['COLLABORATIVE_CALENDAR_KEY_RO']
 
 coverage_required_calendar = os.environ['COVERAGE_REQUIRED_CALENDAR']
 coverage_offered_calendar = os.environ['COVERAGE_OFFERED_CALENDAR']
 tango_required_calendar = os.environ['TANGO_REQUIRED_CALENDAR']
 tango_offered_calendar = os.environ['TANGO_OFFERED_CALENDAR']
+GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 
 OUTPUT_FMT_YMDHM = '%m/%d/%Y %H:%M'
 OUTPUT_FMT_YMD = '%B %d, %Y'
 API_DATE_FORMAT_YMD = '%Y-%m-%d'
+ems_reports_root = '/Users/gnowakow/Downloads/ems_reports/'
+output_root = None
+
 
 COVERAGE_LEVEL_DESCR_MAP = {
     'crew_chief': 'Crew Chief',
@@ -76,9 +81,11 @@ def check_events(required_subcalendar_id, offered_subcalendar_id, start_dt, end_
     requireds = get_coverage_required(required_subcalendar_id, start_dt, end_dt)
 
     # Note: When getting the coverage offered, we will start from the previous day (1 day before start_dt) to get all of the events
-    # that started the day before, and ended today.
-    start_dt = (datetime.datetime.strptime(start_dt, API_DATE_FORMAT_YMD) - datetime.timedelta(days=1)).strftime(API_DATE_FORMAT_YMD)
-    coverages = get_coverage_offered(offered_subcalendar_id, start_dt, end_dt)
+    # that started the day before, and ended today, and one day after, to get all that started today but end tomorrow.
+    start_before = parse_date_add_hours(start_dt, -1*24, API_DATE_FORMAT_YMD).strftime(API_DATE_FORMAT_YMD)
+    end_after = parse_date_add_hours(end_dt, 2*24, API_DATE_FORMAT_YMD).strftime(API_DATE_FORMAT_YMD)
+
+    coverages = get_coverage_offered(offered_subcalendar_id, start_before, end_after)
 
     shift_errors = []
     shift_warnings = []
@@ -131,6 +138,11 @@ def date_to_key(dt):
 def add_hour_to_key(key):
     dt = key_to_date(key)
     delta = datetime.timedelta(hours=1)
+    return dt + delta
+
+def parse_date_add_hours(date_str, hours, format):
+    dt = datetime.datetime.strptime(date_str, format)
+    delta = datetime.timedelta(hours=hours)
     return dt + delta
 
 STAFFING_ERROR_SORT_ORDER = ['Crew Chief', 'Driver or EMT over 18']
@@ -424,6 +436,7 @@ def format_html_shift_report(final_report_map):
             max_members = max(max_members, len(coverage_span['who'].split(',')))
 
         shift_content = '<h2>{}</h2>'.format(create_shift_name(shift))
+        shift_content += '<h3>Shift Times: {} - {}</h3>'.format(date_simple_format(shift['start_dt']), date_simple_format(shift['end_dt']))
         shift_table = '<table>'
         shift_table += '<tr><th>Start</th><th>End</th><th>Hours</th>{}</tr>'.format(''.join(['<th>Member</th>' for x in range(max_members)]))
         for coverage_span in coverage:
@@ -445,16 +458,39 @@ def format_html_shift_report(final_report_map):
         shift_content += '<h3>Shift Summary</h3>'
         shift_content += build_shift_summary_table(summary)
 
+        shift_date_formatted = dateutil.parser.isoparse(shift['start_dt']).strftime('%A_%Y%m%d%H')
+
+        email_list = build_email_list(summary)
+
+        with open('{}/email_list_{}.txt'.format(output_root, shift_date_formatted), 'w') as f:
+            f.write(email_list)
+
         template = None
         with open('/Users/gnowakow/Projects/EMS/TeamUp/docs/schedule_template.txt'.format(shift_date), 'r') as f:
             template = f.read()
 
         html_file = template.replace('<!-- Content -->', shift_content)
 
-        output_filename = '/Users/gnowakow/Downloads/sample_report_{}.html'.format(date_to_key(dateutil.parser.isoparse(shift['start_dt'])))
+        output_filename = '{}/shift_report_{}.html'.format(
+            output_root,
+            shift_date_formatted,
+            )
         with open(output_filename, 'w') as f:
             f.write(html_file)
 
+        post_to_gdrive(html_file)
+
+
+def build_email_list(summary):
+    email_addresses = ''
+    for member_name, member_hours in summary.items():
+        if member_name in emails.email_map:
+            email_addresses += emails.email_map[member_name] + ','
+
+    return email_addresses
+
+def post_to_gdrive(html_file):
+    pass
 
 def build_shift_summary_table(summary) -> str:
     summary_table = '<table>'
@@ -511,7 +547,7 @@ def are_keys_consecutive(previous_hour, hour):
 def concat_offer_names(coverages):
     names = []
     for coverage in coverages:
-        names.append('{} ({})'.format(coverage['who'], BRIEF_COVERAGE_DESCR_MAP.get(coverage['custom']['coverage_level'][0])))
+        names.append('{} <span class="duty_role">({})</span>'.format(coverage['who'], BRIEF_COVERAGE_DESCR_MAP.get(coverage['custom']['coverage_level'][0])))
     return ', '.join(names)
 
 def are_names_equal(previous_names, coverages):
@@ -522,9 +558,27 @@ def are_names_equal(previous_names, coverages):
     return previous_names == names
 
 
+def build_output_path():
+    global output_root
+    output_root = os.path.join(ems_reports_root, datetime.datetime.now().strftime('%A_%Y-%m-%d'))
+    if not os.path.exists(output_root):
+        os.makedirs(output_root)
+    else:
+        for f in os.listdir(output_root):
+            os.remove(os.path.join(output_root, f))
+
+def get_command_arguments():
+    pass
+
 if __name__ == '__main__':
-    search_start = datetime.datetime.now().strftime(API_DATE_FORMAT_YMD)
-    search_end = (datetime.datetime.now() + datetime.timedelta(days=5)).strftime(API_DATE_FORMAT_YMD)
+    build_output_path()
+    # search_start = datetime.datetime.now().strftime(API_DATE_FORMAT_YMD)
+    # search_end = (datetime.datetime.now() + datetime.timedelta(days=5)).strftime(API_DATE_FORMAT_YMD)
+    # search_start = '2021-12-01'
+    # search_end = '2021-12-31'
+    search_start = '2022-01-12'
+    search_end = '2022-01-17'
+
     print('Searching from {} to {}'.format(search_start, search_end))
     requireds, coverages, errors, warnings = check_events(coverage_required_calendar, coverage_offered_calendar, search_start, search_end)
     print('====================================')

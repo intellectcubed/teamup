@@ -9,3 +9,5 @@ start_dt,end_dt,squad,title
 2021-12-08T18:00:00-05:00,2021-12-09T01:00:00-05:00,Minimum fully staffed (interval) Test Case 9 (P)
 2021-12-09T18:00:00-05:00,2021-12-10T01:00:00-05:00,Maximum fully staffed (interval) Test Case 10 (P)
 2021-12-10T18:00:00-05:00,2021-12-11T01:00:00-05:00,Crew Chief Missing for 1 hour Test Case 11 (F)
+2021-12-12T18:00:00-05:00,2021-12-13T06:00:00-05:00,Staffed test case 12 (P)
+2021-12-10T18:00:00-05:00,2021-12-11T01:00:00-05:00,Staffed test case 13 (P)

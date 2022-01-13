@@ -9,6 +9,11 @@ td {
   padding: 5px;
 }
 
+.duty_role {
+  color: red;
+  font-weight: bold;
+}
+
 .cell_hour {
   text-align: center;
 }
@@ -22,4 +27,7 @@ body {
 }
 </style></head><body>
 <!-- Content -->
+<br/>
+<br />
+<a href="https://tinyurl.com/martinsville-shifts">You can make schedule changes by clicking here</a>
 </body></html>

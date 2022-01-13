@@ -1,12 +1,17 @@
 # teamup
 Pull events from teamup calendar and ensure that shifts are covered
 
+
 # Running
 ### Set up Python:
 ```
 source ~/Downloads/env/bin/activate
 source secrets.sh
+
+  pip install --upgrade google-api-python-client google-auth-httplib2 google-auth-oauthlib
 ```
+
+
 
 ## Export environment variables:
 export TEAMUP_API_KEY_OTHER=<>

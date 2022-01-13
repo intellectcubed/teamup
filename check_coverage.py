@@ -7,6 +7,8 @@ import os
 import calendar
 import time
 import emails
+from common.email_utils import send_email
+import argparse
 
 api_key = os.environ['TEAMUP_API_KEY']
 
@@ -425,7 +427,7 @@ def simple_shift_formatting(final_report_map):
         print("")
 
 # Might consider this in the future: https://ptable.readthedocs.io/en/latest/tutorial.html  (at least for debugging/printing interactively ascii tables)
-def format_html_shift_report(final_report_map):
+def format_html_shift_report(send_email, final_report_map):
     for shift_date, shift_and_coverage in final_report_map.items():
         shift = shift_and_coverage['shift']
         coverage = shift_and_coverage['coverage']
@@ -478,7 +480,8 @@ def format_html_shift_report(final_report_map):
         with open(output_filename, 'w') as f:
             f.write(html_file)
 
-        post_to_gdrive(html_file)
+        if send_email:
+            send_via_email(html_file)
 
 
 def build_email_list(summary):
@@ -489,8 +492,10 @@ def build_email_list(summary):
 
     return email_addresses
 
-def post_to_gdrive(html_file):
-    pass
+def send_via_email(html_file):
+    email_list = 'gmn314@yahoo.com'
+    send_email(email_list, 'Shift coming up soon', html_file)
+    print('Sent email to {}'.format(email_list))
 
 def build_shift_summary_table(summary) -> str:
     summary_table = '<table>'
@@ -568,28 +573,43 @@ def build_output_path():
             os.remove(os.path.join(output_root, f))
 
 def get_command_arguments():
-    pass
+    # Instantiate the parser
+    parser = argparse.ArgumentParser(description='Optional app description')        
+
+    # Required positional argument
+    parser.add_argument('--start_date', default=datetime.datetime.now().strftime(API_DATE_FORMAT_YMD), 
+        help='Start date of the report in YYYY-MM-DD format', required=False)
+
+    parser.add_argument('--end_date', default=(datetime.datetime.now() + datetime.timedelta(days=5)).strftime(API_DATE_FORMAT_YMD),
+        help='End date of the report in YYYY-MM-DD format', required=False)
+
+    parser.add_argument('--send_email', type=bool, help='Boolean should the email be sent?', required=False, default=False)
+
+    # Parse the arguments
+    args = parser.parse_args()
+
+    print('===========')
+    print('Generating report for {} to {}'.format(args.start_date, args.end_date))
+    print('Will print? {}'.format(args.send_email))
+    print('===========')    
+
+    return args 
 
 if __name__ == '__main__':
+    args = get_command_arguments()
     build_output_path()
-    # search_start = datetime.datetime.now().strftime(API_DATE_FORMAT_YMD)
-    # search_end = (datetime.datetime.now() + datetime.timedelta(days=5)).strftime(API_DATE_FORMAT_YMD)
-    # search_start = '2021-12-01'
-    # search_end = '2021-12-31'
-    search_start = '2022-01-12'
-    search_end = '2022-01-17'
 
-    print('Searching from {} to {}'.format(search_start, search_end))
-    requireds, coverages, errors, warnings = check_events(coverage_required_calendar, coverage_offered_calendar, search_start, search_end)
+    # print('Searching from {} to {}'.format(args.start_date, args.end_date))
+    requireds, coverages, errors, warnings = check_events(coverage_required_calendar, coverage_offered_calendar, args.start_date, args.end_date)
     print('====================================')
     print('Duty Shifts Found: {} errors and {} warnings'.format(len(errors), len(warnings)))
     report_errors(errors)
 
-    final_report_map = report_shifts(coverage_required_calendar, coverage_offered_calendar, search_start, search_end, errors)
-    format_html_shift_report(final_report_map)
+    final_report_map = report_shifts(coverage_required_calendar, coverage_offered_calendar, args.start_date, args.end_date, errors)
+    format_html_shift_report(args.send_email, final_report_map)
     # simple_shift_formatting(final_report_map)
 
-    requireds, coverages, errors, warnings = check_events(tango_required_calendar, tango_offered_calendar, search_start, search_end)
+    requireds, coverages, errors, warnings = check_events(tango_required_calendar, tango_offered_calendar, args.start_date, args.end_date)
     print('====================================')
     print('Tango Shifts Found: {} errors and {} warnings'.format(len(errors), len(warnings)))
     report_errors(errors)

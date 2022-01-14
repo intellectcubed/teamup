@@ -4,11 +4,13 @@ import dateutil.parser
 import datetime
 import sys
 import os
-import calendar
 import time
 import emails
 from common.email_utils import send_email
 import argparse
+import common.date_utils as date_utils
+import common.utils as utils
+import common.html_formatter as html_formatter
 
 api_key = os.environ['TEAMUP_API_KEY']
 
@@ -21,9 +23,6 @@ tango_required_calendar = os.environ['TANGO_REQUIRED_CALENDAR']
 tango_offered_calendar = os.environ['TANGO_OFFERED_CALENDAR']
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 
-OUTPUT_FMT_YMDHM = '%m/%d/%Y %H:%M'
-OUTPUT_FMT_YMD = '%B %d, %Y'
-API_DATE_FORMAT_YMD = '%Y-%m-%d'
 ems_reports_root = '/Users/gnowakow/Downloads/ems_reports/'
 output_root = None
 
@@ -41,8 +40,6 @@ BRIEF_COVERAGE_DESCR_MAP = {
     'emt_under_18_': 'EMT < 18',
     'driver': 'Driver'
 } 
-
-HOUR_KEY_FMT = '%Y%m%d%H'
 
 
 def get_events(start_dt, end_dt, subcalendar_id):
@@ -65,12 +62,12 @@ def get_coverage_offered(sub_calendar_id, start_dt, end_dt):
     coverage_offered = {} # Key: date + hour, value: list of events
     coverages = get_events(start_dt, end_dt, sub_calendar_id)
     for coverage in coverages['events']:
-        num_hours = get_hours_parse(coverage['start_dt'], coverage['end_dt']) # for how many hours is this coverage offered?
+        num_hours = date_utils.get_hours_parse(coverage['start_dt'], coverage['end_dt']) # for how many hours is this coverage offered?
         start_date = dateutil.parser.isoparse(coverage['start_dt'])
         for hour in range(num_hours):
             dt = datetime.timedelta(hours=hour)
             coverage_hour = start_date + dt
-            date_hour_key = date_to_key(coverage_hour)
+            date_hour_key = date_utils.date_to_key(coverage_hour)
             coverage_offered[date_hour_key] = coverage_offered.get(date_hour_key, [])
             coverage_offered[date_hour_key].append(coverage)
 
@@ -84,8 +81,8 @@ def check_events(required_subcalendar_id, offered_subcalendar_id, start_dt, end_
 
     # Note: When getting the coverage offered, we will start from the previous day (1 day before start_dt) to get all of the events
     # that started the day before, and ended today, and one day after, to get all that started today but end tomorrow.
-    start_before = parse_date_add_hours(start_dt, -1*24, API_DATE_FORMAT_YMD).strftime(API_DATE_FORMAT_YMD)
-    end_after = parse_date_add_hours(end_dt, 2*24, API_DATE_FORMAT_YMD).strftime(API_DATE_FORMAT_YMD)
+    start_before = date_utils.parse_date_add_hours(start_dt, -1*24, date_utils.API_DATE_FORMAT_YMD).strftime(date_utils.API_DATE_FORMAT_YMD)
+    end_after = date_utils.parse_date_add_hours(end_dt, 2*24, date_utils.API_DATE_FORMAT_YMD).strftime(date_utils.API_DATE_FORMAT_YMD)
 
     coverages = get_coverage_offered(offered_subcalendar_id, start_before, end_after)
 
@@ -111,11 +108,11 @@ def check_staffing(required_subcalendar_id, required_coverage, coverage_events):
     shift_warnings = dict()
 
     start_date = dateutil.parser.isoparse(required_coverage['start_dt'])
-    hours = get_hours_parse(required_coverage['start_dt'], required_coverage['end_dt'])
+    hours = date_utils.get_hours_parse(required_coverage['start_dt'], required_coverage['end_dt'])
     for hour in range(hours):
         dt = datetime.timedelta(hours=hour)
         coverage_hour = start_date + dt
-        date_hour_key = date_to_key(coverage_hour)
+        date_hour_key = date_utils.date_to_key(coverage_hour)
         coverage_events_for_hour = coverage_events.get(date_hour_key, [])
         missing, warnings = is_hour_staffed(required_subcalendar_id, coverage_events_for_hour)
 
@@ -130,22 +127,6 @@ def check_staffing(required_subcalendar_id, required_coverage, coverage_events):
 
     missing_ranges = consolidate_hours(crew_missing)
     return (missing_ranges, shift_warnings)
-
-def key_to_date(key):
-    return datetime.datetime.strptime(key, HOUR_KEY_FMT)
-
-def date_to_key(dt):
-    return dt.strftime(HOUR_KEY_FMT)
-
-def add_hour_to_key(key):
-    dt = key_to_date(key)
-    delta = datetime.timedelta(hours=1)
-    return dt + delta
-
-def parse_date_add_hours(date_str, hours, format):
-    dt = datetime.datetime.strptime(date_str, format)
-    delta = datetime.timedelta(hours=hours)
-    return dt + delta
 
 STAFFING_ERROR_SORT_ORDER = ['Crew Chief', 'Driver or EMT over 18']
 
@@ -165,7 +146,7 @@ def consolidate_hours(crew_missing):
         for date in missing_dates:
             if len(sub_list) == 0:
                 sub_list.append(date)
-            elif add_hour_to_key(sub_list[-1]) == key_to_date(date):
+            elif date_utils.add_hour_to_key(sub_list[-1]) == date_utils.key_to_date(date):
                 sub_list.append(date)
             else:
                 date_sets.append(sub_list[:])
@@ -180,10 +161,10 @@ def consolidate_hours(crew_missing):
         if key in missing_cats:
             date_sets = missing_cats[key]
             for date_set in date_sets:
-                start_date = key_to_date(date_set[0])
-                end_date = add_hour_to_key(date_set[-1])
-                hours = get_hours(start_date, end_date)
-                missing_ranges.append({'start_dt': start_date.strftime(OUTPUT_FMT_YMDHM), 'end_dt': end_date.strftime(OUTPUT_FMT_YMDHM), 'hours': hours, 'error': key})
+                start_date = date_utils.key_to_date(date_set[0])
+                end_date = date_utils.add_hour_to_key(date_set[-1])
+                hours = date_utils.get_hours(start_date, end_date)
+                missing_ranges.append({'start_dt': start_date.strftime(date_utils.OUTPUT_FMT_YMDHM), 'end_dt': end_date.strftime(date_utils.OUTPUT_FMT_YMDHM), 'hours': hours, 'error': key})
 
     return missing_ranges
 
@@ -243,17 +224,6 @@ def check_shift_coverage(coverage_events_for_hour):
 
     return (missing, warnings)
 
-
-def get_hours(start_date, end_date):
-    diff = end_date - start_date
-    return diff.days * 24 + diff.seconds //3600
-
-
-def get_hours_parse(start_dt, end_dt):
-    start_date = dateutil.parser.isoparse(start_dt)
-    end_date = dateutil.parser.isoparse(end_dt)
-    return get_hours(start_date, end_date)
-
 def translate_coverage(coverage_level):
     if coverage_level == 'CC':
         return 'Crew Chief'
@@ -274,36 +244,18 @@ def format_error_report(shift_errors):
         error_report += '\n'
     return error_report
 
-def date_simple_format(dt):
-    return dateutil.parser.isoparse(dt).strftime(OUTPUT_FMT_YMDHM)
-
-
-def create_shift_name(shift):
-    start_date = dateutil.parser.isoparse(shift['start_dt'])
-
-    period = (start_date.hour % 24 + 4) // 4
-    period_map = {1: 'Late Night',
-                        2: 'Early Morning',
-                        3: 'Morning',
-                        4: 'Noon',
-                        5: 'Evening',
-                        6: 'Night'};
-    return '{} ({} shift) {}'.format(
-        calendar.day_name[start_date.weekday()], 
-        period_map.get(period),
-        start_date.strftime(OUTPUT_FMT_YMD)
-        )
-
 
 def report_errors(shift_errors):
     if len(shift_errors) == 0:
         return
     print('The folowing shifts have errors:')
     for shift in shift_errors:
-        print('Shift: ({}) {} - {}'.format(create_shift_name(shift['shift']), date_simple_format(shift['shift']['start_dt']), date_simple_format(shift['shift']['end_dt'])))
+        print('Shift: ({}) {} - {}'.format(utils.create_shift_name(shift['shift']), date_utils.date_simple_format(shift['shift']['start_dt']), 
+            date_utils.date_simple_format(shift['shift']['end_dt'])))
         for error in shift['errors']:
             print('  {} - {} ({} hours): {}'.format(error['start_dt'], error['end_dt'], error['hours'], error['error']))
         print("") 
+
 
 
 def events_to_map(shifts):
@@ -329,12 +281,12 @@ def expand_event(event):
     # value = event
 
     expanded_events = {}
-    num_hours = get_hours_parse(event['start_dt'], event['end_dt']) # for how many hours is this coverage offered?
+    num_hours = date_utils.get_hours_parse(event['start_dt'], event['end_dt']) # for how many hours is this coverage offered?
     start_date = dateutil.parser.isoparse(event['start_dt'])
     for hour in range(num_hours):
         dt = datetime.timedelta(hours=hour)
         coverage_hour = start_date + dt
-        date_hour_key = date_to_key(coverage_hour)
+        date_hour_key = date_utils.date_to_key(coverage_hour)
         expanded_events[date_hour_key] = expanded_events.get(date_hour_key, [])
         expanded_events[date_hour_key].append(event)
     
@@ -343,6 +295,59 @@ def expand_event(event):
 DEBUG_OUTPUT = False
 
 def report_shifts(coverage_required_calendar, coverage_offered_calendar, search_start, search_end, errors):
+    """
+    Returning: 
+        {
+            "2022-01-08T11:00:00-05:00": {
+                "coverage": [
+                    {
+                        "end_dt": "2022010823",
+                        "start_dt": "2022010818",
+                        "who": "Steph Landau (EMT > 18)"
+                    },
+                    {
+                        "end_dt": "2022010901",
+                        "start_dt": "2022010823",
+                        "who": "George Nowakowski (CC), Steph Landau (EMT > 18)"
+                    }
+                ],
+                "shift": {
+                    "all_day": false,
+                    "attachments": [],
+                    "creation_dt": "2022-01-04T13:24:29-05:00",
+                    "custom": {},
+                    "delete_dt": null,
+                    "end_dt": "2022-01-09T01:00:00-05:00",
+                    "id": "1081908428",
+                    "location": "",
+                    "notes": null,
+                    "readonly": true,
+                    "remote_id": null,
+                    "ristart_dt": null,
+                    "rrule": "",
+                    "rsstart_dt": null,
+                    "series_id": null,
+                    "start_dt": "2022-01-08T11:00:00-05:00",
+                    "subcalendar_id": 10358690,
+                    "subcalendar_ids": [
+                        10358690
+                    ],
+                    "title": "MRS Duty: Covering 34 (Green Knoll)",
+                    "tz": null,
+                    "update_dt": null,
+                    "version": "4c69a25fc459",
+                    "who": ""
+                },
+                "shift-summary": {
+                    "George Nowakowski": 2,
+                    "Steph Landau": 7
+                }
+            }
+            ]
+        }
+    """
+
+
     debug_ts = int(time.time())
 
     shifts = get_events(search_start, search_end, coverage_required_calendar)
@@ -369,7 +374,7 @@ def report_shifts(coverage_required_calendar, coverage_offered_calendar, search_
                 for coverage in coverages_:
                     #TODO: If coverage offer started within the shift, but end is beyond end of shift, it will be ignored.  Should be counted!!
                     if coverage_key >= shift_key and coverage_key <= shift['end_dt']:
-                        shift_summary_map[coverage['who']] = shift_summary_map.get(coverage['who'], 0) + get_hours_parse(coverage['start_dt'], coverage['end_dt'])
+                        shift_summary_map[coverage['who']] = shift_summary_map.get(coverage['who'], 0) + date_utils.get_hours_parse(coverage['start_dt'], coverage['end_dt'])
                         events_by_hour = expand_event(coverage)
                         for hour_key, events in events_by_hour.items():
                             covers_for_shift[hour_key] = covers_for_shift.get(hour_key, [])
@@ -421,68 +426,11 @@ def simple_shift_formatting(final_report_map):
     for shift_date, shift_and_coverage in final_report_map.items():
         shift = shift_and_coverage['shift']
         coverage = shift_and_coverage['coverage']
-        print('Shift: ({}) {} - {}'.format(create_shift_name(shift), date_simple_format(shift['start_dt']), date_simple_format(shift['end_dt'])))
+        print('Shift: ({}) {} - {}'.format(utils.create_shift_name(shift), date_utils.date_simple_format(shift['start_dt']), date_utils.date_simple_format(shift['end_dt'])))
         for hour_coverage in coverage:
-            print('  {} - {} ({} hours): {}'.format(hour_coverage['start_dt'], hour_coverage['end_dt'], get_hours(key_to_date(hour_coverage['start_dt']), key_to_date(hour_coverage['end_dt'])), hour_coverage['who']))
+            print('  {} - {} ({} hours): {}'.format(hour_coverage['start_dt'], hour_coverage['end_dt'], date_utils.get_hours(date_utils.key_to_date(hour_coverage['start_dt']), 
+                date_utils.key_to_date(hour_coverage['end_dt'])), hour_coverage['who']))
         print("")
-
-# Might consider this in the future: https://ptable.readthedocs.io/en/latest/tutorial.html  (at least for debugging/printing interactively ascii tables)
-def format_html_shift_report(send_email, final_report_map):
-    for shift_date, shift_and_coverage in final_report_map.items():
-        shift = shift_and_coverage['shift']
-        coverage = shift_and_coverage['coverage']
-        summary = shift_and_coverage['shift-summary']
-
-        max_members = -1
-        for coverage_span in coverage:
-            max_members = max(max_members, len(coverage_span['who'].split(',')))
-
-        shift_content = '<h2>{}</h2>'.format(create_shift_name(shift))
-        shift_content += '<h3>Shift Times: {} - {}</h3>'.format(date_simple_format(shift['start_dt']), date_simple_format(shift['end_dt']))
-        shift_table = '<table>'
-        shift_table += '<tr><th>Start</th><th>End</th><th>Hours</th>{}</tr>'.format(''.join(['<th>Member</th>' for x in range(max_members)]))
-        for coverage_span in coverage:
-            shift_row = '<tr><td>{}</td><td>{}</td><td class="cell_hour">{}</td>'.format(
-                key_to_date(coverage_span['start_dt']).strftime(OUTPUT_FMT_YMDHM), 
-                key_to_date(coverage_span['end_dt']).strftime(OUTPUT_FMT_YMDHM),
-                get_hours(key_to_date(coverage_span['start_dt']), key_to_date(coverage_span['end_dt']))
-                )
-            shift_row += ''.join(['<td>{}</td>'.format(x) for x in coverage_span['who'].split(',')])
-            # TODO: Fill in blank cells with empty strings here
-            num_blank_cells = max_members - len(coverage_span['who'].split(','))
-            shift_row += ''.join(['<td></td>' for x in range(num_blank_cells)])
-            shift_row += '</tr>'
-            shift_table += shift_row
-
-        shift_table += '</table>'
-        shift_content += shift_table
-
-        shift_content += '<h3>Shift Summary</h3>'
-        shift_content += build_shift_summary_table(summary)
-
-        shift_date_formatted = dateutil.parser.isoparse(shift['start_dt']).strftime('%A_%Y%m%d%H')
-
-        email_list = build_email_list(summary)
-
-        with open('{}/email_list_{}.txt'.format(output_root, shift_date_formatted), 'w') as f:
-            f.write(email_list)
-
-        template = None
-        with open('/Users/gnowakow/Projects/EMS/TeamUp/docs/schedule_template.txt'.format(shift_date), 'r') as f:
-            template = f.read()
-
-        html_file = template.replace('<!-- Content -->', shift_content)
-
-        output_filename = '{}/shift_report_{}.html'.format(
-            output_root,
-            shift_date_formatted,
-            )
-        with open(output_filename, 'w') as f:
-            f.write(html_file)
-
-        if send_email:
-            send_via_email(html_file)
-
 
 def build_email_list(summary):
     email_addresses = ''
@@ -497,18 +445,14 @@ def send_via_email(html_file):
     send_email(email_list, 'Shift coming up soon', html_file)
     print('Sent email to {}'.format(email_list))
 
-def build_shift_summary_table(summary) -> str:
-    summary_table = '<table>'
-    summary_table += '<tr><th>Member</th><th>Total Hours</th></tr>'
-    for summary_key, summary_value in summary.items():
-        summary_table += '<tr><td>{}</td><td>{}</td></tr>'.format(summary_key, summary_value)
-    summary_table += '</table>'
-    return summary_table
-
 def collapse_into_like_shifts(merged_shift_map):
     """
     Given a map of shifts, collapse them into like shifts
     like shifts are consecutive shifts that have the same people working
+
+    Returns:
+
+
     """
     final_report_map = {}
     # Collapse into like shifts
@@ -527,15 +471,16 @@ def collapse_into_like_shifts(merged_shift_map):
                 previous_hour = hour_key
             else:
                 if previous_member_names is not None:
-                    collapsed_coverages.append({'start_dt': start_hour, 'end_dt': date_to_key(add_hour_to_key(previous_hour)), 'who': previous_member_names})
+                    collapsed_coverages.append({'start_dt': start_hour, 'end_dt': date_utils.date_to_key(date_utils.add_hour_to_key(previous_hour)), 'who': previous_member_names})
                 previous_member_names = concat_offer_names(coverage_offers_for_hour)
                 start_hour = hour_key
                 previous_hour = hour_key
 
         if previous_member_names is not None:
-            collapsed_coverages.append({'start_dt': start_hour, 'end_dt': date_to_key(add_hour_to_key(previous_hour)), 'who': previous_member_names})
+            collapsed_coverages.append({'start_dt': start_hour, 'end_dt': date_utils.date_to_key(date_utils.add_hour_to_key(previous_hour)), 'who': previous_member_names})
 
         final_report_map[shift_date] = {'shift': shift, 'coverage': collapsed_coverages, 'shift-summary': shift_and_coverage['shift-summary']}
+
     return final_report_map
 
 
@@ -543,11 +488,11 @@ def are_keys_consecutive(previous_hour, hour):
     if previous_hour is None:
         return False
 
-    prev_date = datetime.datetime.strptime(previous_hour, HOUR_KEY_FMT)
+    prev_date = datetime.datetime.strptime(previous_hour, date_utils.HOUR_KEY_FMT)
     dt = datetime.timedelta(hours=1)
     hour_after_prev = prev_date + dt
 
-    return datetime.datetime.strftime(hour_after_prev, HOUR_KEY_FMT) == hour        
+    return datetime.datetime.strftime(hour_after_prev, date_utils.HOUR_KEY_FMT) == hour        
 
 def concat_offer_names(coverages):
     names = []
@@ -572,15 +517,60 @@ def build_output_path():
         for f in os.listdir(output_root):
             os.remove(os.path.join(output_root, f))
 
+def send_html_email(html_file, summary):
+    email_list = build_email_list(summary)
+    if html_file is None or len(html_file) == 0:
+        print('It is zero!!!!!!!!!!!!!!!')
+    send_email(email_list, 'Shift coming up soon', html_file)
+    # print('Sent email to {}'.format(email_list))
+
+
+def process_html_results(html_map, final_report_map, should_send_emails):
+    """
+    Iterate through the final_report_map.  For each shift:
+        * Create an email mailing list
+        * Create an html file
+        * If should_send_emails is True, send the email
+    """
+    for shift_date, shift_and_coverage in final_report_map.items():
+        shift = shift_and_coverage['shift']
+        coverage = shift_and_coverage['coverage']
+        summary = shift_and_coverage['shift-summary']
+
+        if should_send_emails:
+            send_html_email(html_map[shift_date], summary)
+
+        # Also, write the html to a file
+        email_list = build_email_list(summary)
+        shift_date_formatted = dateutil.parser.isoparse(shift['start_dt']).strftime('%A_%Y%m%d%H')
+        with open('{}/email_list_{}.txt'.format(output_root, shift_date_formatted), 'w') as f:
+            f.write(email_list)
+
+        output_filename = '{}/shift_report_{}.html'.format(
+            output_root,
+            shift_date_formatted,
+        )
+        with open(output_filename, 'w') as f:
+            f.write(html_map[shift_date])
+            # print('Wrote: {}'.format(output_filename))
+
+def process_html_errors(error_html):
+    with open('{}/error_list.html'.format(output_root), 'w') as f:
+        f.write(error_html)
+    # for shift_date, error_html in html_error_map.items():
+    #     shift_date_formatted = dateutil.parser.isoparse(shift_date).strftime('%A_%Y%m%d%H')
+    #     with open('{}/error_list_{}.html'.format(output_root, shift_date_formatted), 'w') as f:
+    #         f.write(error_html)
+
 def get_command_arguments():
     # Instantiate the parser
     parser = argparse.ArgumentParser(description='Optional app description')        
 
     # Required positional argument
-    parser.add_argument('--start_date', default=datetime.datetime.now().strftime(API_DATE_FORMAT_YMD), 
+    parser.add_argument('--start_date', default=datetime.datetime.now().strftime(date_utils.API_DATE_FORMAT_YMD), 
         help='Start date of the report in YYYY-MM-DD format', required=False)
 
-    parser.add_argument('--end_date', default=(datetime.datetime.now() + datetime.timedelta(days=5)).strftime(API_DATE_FORMAT_YMD),
+    parser.add_argument('--end_date', default=(datetime.datetime.now() + datetime.timedelta(days=5)).strftime(date_utils.API_DATE_FORMAT_YMD),
         help='End date of the report in YYYY-MM-DD format', required=False)
 
     parser.add_argument('--send_email', type=bool, help='Boolean should the email be sent?', required=False, default=False)
@@ -588,10 +578,10 @@ def get_command_arguments():
     # Parse the arguments
     args = parser.parse_args()
 
-    print('===========')
+    print('===============================================')
     print('Generating report for {} to {}'.format(args.start_date, args.end_date))
-    print('Will print? {}'.format(args.send_email))
-    print('===========')    
+    print('Will send email? {}'.format(args.send_email))
+    print('===============================================')    
 
     return args 
 
@@ -605,11 +595,16 @@ if __name__ == '__main__':
     print('Duty Shifts Found: {} errors and {} warnings'.format(len(errors), len(warnings)))
     report_errors(errors)
 
+    html_errors = html_formatter.format_html_report_errors(errors, args.start_date, 99)
+    process_html_errors(html_errors)
+
     final_report_map = report_shifts(coverage_required_calendar, coverage_offered_calendar, args.start_date, args.end_date, errors)
-    format_html_shift_report(args.send_email, final_report_map)
+    html_map = html_formatter.format_html_shift_report(final_report_map)
+    process_html_results(html_map, final_report_map, args.send_email)
     # simple_shift_formatting(final_report_map)
 
     requireds, coverages, errors, warnings = check_events(tango_required_calendar, tango_offered_calendar, args.start_date, args.end_date)
+    # html_formatter.format_html_unstaffed_report(requireds, coverages, errors, warnings)
     print('====================================')
     print('Tango Shifts Found: {} errors and {} warnings'.format(len(errors), len(warnings)))
     report_errors(errors)

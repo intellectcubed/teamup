@@ -1,0 +1,49 @@
+<html><head><style>table, th, td {
+  border: 1px solid #777;
+  border-collapse: collapse;
+  font-size: 15px;
+  font-family: Trebuchet MS, sans-serif;
+}
+
+td {
+  padding: 5px;
+  background: #f6f8ff;
+}
+
+.duty_role {
+  color: red;
+  font-weight: bold;
+}
+
+.cell_hour {
+  text-align: center;
+}
+
+hr {
+  height:5px;
+  border-width:0;
+  background-color:red;
+}
+
+th { background: red; color: white; text-align:left; padding:5px;}
+
+
+body {
+   color: black;
+  font-family: Trebuchet MS, sans-serif;
+}
+
+
+</style></head>
+
+<body>
+
+<h1>Incomplete Shift Report</h1>
+<span>The following shifts are upcoming shifts that do not have the minimum required crew.  If the below shifts go unfilled, Martinsville will be out of service</span>
+
+<!-- Content -->
+
+
+<br />
+<a href="https://tinyurl.com/martinsville-shifts">You can make schedule changes by clicking here</a>
+</body></html>

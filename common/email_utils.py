@@ -6,15 +6,20 @@ import os
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-gmail_account = os.environ['FROM_EMAIL']
-gmail_password = os.environ['GMAIL_PWD']
+from_email = os.environ['FROM_EMAIL_ADDRESS']
+email_account = os.environ['EMAIL_ACCOUNT']
+email_password = os.environ['EMAIL_PASSWORD']
+smtp_server = os.environ['SMTP_SERVER']
 
 
 def send_email(to_email, subject, body):
+
+    to_email = 'gmn314@yahoo.com'
+
     # Create the container (outer) email message.
     msg = MIMEMultipart()
     msg['Subject'] = subject
-    msg['From'] = gmail_account
+    msg['From'] = from_email
     msg['To'] = to_email
 
     # Assume that the message contains HTML
@@ -22,10 +27,9 @@ def send_email(to_email, subject, body):
 
     # Send the email via our own SMTP server.
     # s = smtplib.SMTP('smtp.gmail.com', 587)
-    s = smtplib.SMTP('smtp.mail.yahoo.com', 587)
+    s = smtplib.SMTP(smtp_server, 587)
     s.starttls()
-    print('creds: {} - {}'.format(gmail_account, gmail_password))
-    s.login(gmail_account, gmail_password)
+    s.login(email_account, email_password)
     s.send_message(msg)
     s.quit()
 

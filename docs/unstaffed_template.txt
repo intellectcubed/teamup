@@ -5,6 +5,10 @@
   font-family: Trebuchet MS, sans-serif;
 }
 
+table {
+  min-width: 600px;
+}
+
 td {
   padding: 5px;
   background: #f6f8ff;

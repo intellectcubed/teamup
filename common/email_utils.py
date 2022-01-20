@@ -12,15 +12,15 @@ email_password = os.environ['EMAIL_PASSWORD']
 smtp_server = os.environ['SMTP_SERVER']
 
 
-def send_email(to_email, subject, body):
-
-    to_email = 'gmn314@yahoo.com'
+def send_email(to_emails, cc_list, subject, body):
 
     # Create the container (outer) email message.
     msg = MIMEMultipart()
     msg['Subject'] = subject
     msg['From'] = from_email
-    msg['To'] = to_email
+    msg['To'] = ', '.join(to_emails)
+    if cc_list is not None and len(cc_list) > 0:
+        msg['Cc'] = ', '.join(cc_list)
 
     # Assume that the message contains HTML
     msg.attach(MIMEText(body, 'html'))

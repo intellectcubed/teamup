@@ -18,79 +18,138 @@ martinsville_43_
 somerville_54_
 """
 
-import requests
-import json
 import csv
+import argparse
+import os
+import common.teamup_utils as teamup_utils
+import sys
 
-api_key = '63a9180007a78ac4ea5738101159eb2ec8819f616ae91ed1d9e377dfd9300855'
 
 url = 'https://api.teamup.com'
-collaborative_calendar_key = 'ksfpzqh66j83hdoo85'
-power_sub_calendar = 10364744
-shift_sub_calendar = 10364691
-tango_sub_calendar = 10364692
 
-def add_events(source_file):
-    with open(source_file, 'r') as f:
-        rdr = csv.reader(f)
-        # This skips the header
-        next(rdr)
-        for row in rdr:
-            print(row)
+api_key = os.environ['TEAMUP_API_KEY']
+target_calendar_key = os.environ['COLLABORATIVE_CALENDAR_ADMIN_KEY']
+coverage_required_calendar = os.environ['COVERAGE_REQUIRED_CALENDAR']
+coverage_offered_calendar = os.environ['COVERAGE_OFFERED_CALENDAR']
+tango_required_calendar = os.environ['TANGO_REQUIRED_CALENDAR']
+tango_offered_calendar = os.environ['TANGO_OFFERED_CALENDAR']
 
-            event = {
-                'subcalendar_id': int(row[0]),
-                'start_dt': row[1],
-                'end_dt': row[2],
-                'title': row[4],
-                'custom': {
-                    'squad2': row[3]
-                }
-            }
-            create_event(event)
+"""
+### Example how to invoke (Coverage required): 
+python3 create_events.py --calendar coverage_required --source_file /Users/gnowakow/Projects/EMS/TeamUp/shifts/feb_2022_coverage_required.csv
 
-def create_event(event):
-    headers = {'Content-type': 'application/json', 'Accept': 'text/plain', 'Teamup-Token': api_key}
-
-    ret = requests.post('/'.join([url, collaborative_calendar_key, 'events']), data=json.dumps(event), headers=headers)
-    print('created event')
-
-def get_events(start_dt, end_dt):
-    headers = {'Content-type': 'application/json', 'Accept': 'text/plain', 'Teamup-Token': api_key}
-    ret = requests.get('/'.join([url, collaborative_calendar_key, 'events']) + '?startDate={}&endDate={}'.format(start_dt, end_dt), headers=headers)
-    return json.loads(ret.text)
-    print(ret.text)
+Expected input for coverage_required calendar: [start_dt, end_dt, title]
+Example: 2022-02-01T18:00:00-05:00,2022-02-02T06:00:00-05:00,MRS Duty: Covering 34 (Green Knoll) and 35 (Finderne)
 
 
-def get_event1():
-    return     {
-      'subcalendar_id': shift_sub_calendar,
-      'subcalendar_ids': [
-        shift_sub_calendar
-      ],
-      'all_day': False,
-      'notes': '<p>Covering 35 / 42 / 54</p>',
-      'readonly': False,
-      'start_dt': '2021-12-31T18:00:00-05:00',
-      'end_dt': '2022-01-01T01:00:00-05:00',
-      'squad2': 'bradley_gardens_39_',
-      'custom': {
-        'squad': 'bradley_gardens_39_'
-      }
-    }
+### Example how to invoke (Coverage offered):
+python3 create_events.py --calendar coverage_offered --source_file /Users/gnowakow/Projects/EMS/TeamUp/shifts/feb_2022_coverage_offered.csv
 
-def delete_event(event_id):
-    # print('Deleting event: ' + str(event_id))
-    headers = {'Content-type': 'application/json', 'Accept': 'text/plain', 'Teamup-Token': api_key}
-    ret = requests.delete('/'.join([url, collaborative_calendar_key, 'events', str(event_id)]), headers=headers)
-    print('deleted event: ' + str(event_id))
+Expected input for coverage_offered: [start_dt, end_dt, role, who]
+Example: 2022-02-14T18:00:00-05:00,2022-02-15T00:00:00-05:00,crew_chief,Jim Ross
 
-def delete_all_events(events):
-    for event in events['events']:
-        delete_event(event['id'])
+
+### To delete records created: 
+
+python3 create_events.py --calendar coverage_required --source_file /Users/gnowakow/Projects/EMS/TeamUp/shifts/feb_2022_coverage_required_event_ids.csv --delete_all
+
+
+"""
+
+
+def add_events(source_file, sub_calendar_key):
+    print('Going to create events in calendar: {} Sub calendar: {} using API key: {}'.format(target_calendar_key, sub_calendar_key, api_key))
+    num_events = 0
+    event_id_file = source_file.replace('.csv', '_event_ids.csv')
+    with open(event_id_file, 'w') as events_file:
+        with open(source_file, 'r') as f:
+            rdr = csv.reader(f)
+            for row in rdr:
+                event = row_to_event(sub_calendar_key, row)
+                print(event)
+
+                new_event = teamup_utils.create_event(event, target_calendar_key, api_key)
+                if new_event is None:
+                    print('Failed to create event: {}'.format(event))
+                    sys.exit(1)
+
+                # print('Created event: {}'.format(new_event))
+                events_file.write(str(new_event['event']['id']) + '\n')
+                num_events += 1
+    return num_events
+
+def row_to_event(sub_calendar_id, row):
+    # print('calling row_to_event with: {}'.format(sub_calendar_id))
+    if sub_calendar_id == translate_calendar_key('coverage_required'):
+        return {
+            'subcalendar_id': sub_calendar_id,
+            'start_dt': row[0],
+            'end_dt': row[1],
+            'title': row[2]
+        }
+    elif sub_calendar_id == translate_calendar_key('coverage_offered'):
+        return {
+            'subcalendar_id': sub_calendar_id,
+            'start_dt': row[0],
+            'end_dt': row[1],
+            'custom': {
+                'coverage_level': row[2]
+            },
+            'who': row[3]
+        }
+
+def translate_calendar_key(calendar_key):
+    if calendar_key == 'coverage_required':
+        return coverage_required_calendar
+    elif calendar_key == 'coverage_offered':
+        return coverage_offered_calendar
+    elif calendar_key == 'tango_required':
+        return tango_required_calendar
+    elif calendar_key == 'tango_offered':
+        return tango_offered_calendar
+    else:
+        raise Exception('Invalid calendar key: {}'.format(calendar_key))
+
+
+def delete_all_events(id_file, sub_calendar_key):
+    with open(id_file, 'r') as f:
+        for event_id in f:
+            print('Deleting event: {}'.format(event_id))
+            teamup_utils.delete_event(event_id, sub_calendar_key, api_key)
+
+def get_command_arguments():
+    # Instantiate the parser
+    parser = argparse.ArgumentParser(description='Optional app description')        
+
+    # Required positional argument
+
+    parser.add_argument('--calendar_key', 
+        choices=['coverage_required', 'coverage_offered', 'tango_required', 'tango_offered'])
+
+    parser.add_argument('--source_file' , help='The name of the file to read from')
+
+    parser.add_argument('--delete_all', action='store_true', help='Delete all events in the calendar')
+
+    # Parse the arguments
+    args = parser.parse_args()
+
+    print('===============================================')
+    print('Will read the file: {}'.format(args.source_file))
+    print('And create events in: {}'.format(args.calendar_key))
+    print('===============================================')    
+
+    if input("are you sure? (y/n)") != "y":
+        exit()
+
+    return args 
 
 
 if __name__ == '__main__':
-    # add_events('/Users/gnowakow/Documents/tango.csv')
-    add_events('/Users/gnowakow/Documents/collab_jan.csv')
-    # delete_all_events(get_events('2022-01-01', '2022-02-01'))
+    args = get_command_arguments()
+    if args.delete_all:
+        delete_all_events(args.source_file, translate_calendar_key(args.calendar_key))
+    else:
+        num_events = add_events(args.source_file, translate_calendar_key(args.calendar_key))
+        print('Created {} events.  Saved event_ids in a file'.format(num_events))
+        
+    # add_events(args.source_file, args.calendar_key)

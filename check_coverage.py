@@ -1,3 +1,4 @@
+from typing import Set
 import requests
 import json
 import dateutil.parser
@@ -25,20 +26,24 @@ GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 
 ems_reports_root = '/Users/gnowakow/Downloads/ems_reports/'
 output_root = None
+# The below boolean determines if the script will prompt the user to confirm certain actions.
+NO_PROMPT_USER = False
 
 
 COVERAGE_LEVEL_DESCR_MAP = {
     'crew_chief': 'Crew Chief',
     'emt': 'EMT over 18',
     'emt_under_18_': 'EMT under 18',
-    'driver': 'Driver'
+    'driver': 'Driver',
+    'assistant': 'Assistant'
 } 
 
 BRIEF_COVERAGE_DESCR_MAP = {
     'crew_chief': 'CC',
     'emt': 'EMT > 18',
     'emt_under_18_': 'EMT < 18',
-    'driver': 'Driver'
+    'driver': 'Driver',
+    'assistant': 'Assistant'
 } 
 
 
@@ -94,10 +99,12 @@ def check_events(required_subcalendar_id, offered_subcalendar_id, start_dt, end_
         # shift = '{} - {}'.format(required['start_dt'], required['end_dt'])
         if len(missing) > 0:
             shift_errors.append({'shift': required, 'errors': missing, 'warnings': warnings})
+
         if len(warnings) > 0:
             shift_warnings.append({'shift': required, 'errors': [], 'warnings': warnings})
 
     return (requireds, coverages, shift_errors, shift_warnings)
+
 
 def check_staffing(required_subcalendar_id, required_coverage, coverage_events):
     """
@@ -121,9 +128,6 @@ def check_staffing(required_subcalendar_id, required_coverage, coverage_events):
 
         if len(warnings) > 0:
             shift_warnings[date_hour_key] = warnings
-
-    # for key, value in crew_missing.items():
-    #     print('{} - {}'.format(key, value))
 
     missing_ranges = consolidate_hours(crew_missing)
     return (missing_ranges, shift_warnings)
@@ -295,6 +299,13 @@ def expand_event(event):
 DEBUG_OUTPUT = False
 
 def report_shifts(coverage_required_calendar, coverage_offered_calendar, search_start, search_end, errors):
+
+    shifts_with_errors = set()
+
+    for shift in errors:
+        shifts_with_errors.add(shift['shift']['id'])
+
+    
     """
     Returning: 
         {
@@ -351,7 +362,11 @@ def report_shifts(coverage_required_calendar, coverage_offered_calendar, search_
     debug_ts = int(time.time())
 
     shifts = get_events(search_start, search_end, coverage_required_calendar)
-    coverages = get_events(search_start, search_end, coverage_offered_calendar)
+
+    coverage_start = date_utils.parse_date_add_hours(search_start, -24, date_utils.API_DATE_FORMAT_YMD)
+    coverage_end = date_utils.parse_date_add_hours(search_end, 24, date_utils.API_DATE_FORMAT_YMD)
+
+    coverages = get_events(coverage_start, coverage_end, coverage_offered_calendar)
 
     shift_map = events_to_map(shifts['events'])
     shift_keys = sorted(shift_map.keys())
@@ -365,6 +380,9 @@ def report_shifts(coverage_required_calendar, coverage_offered_calendar, search_
     for shift_key in shift_keys:
         shifts_ = shift_map[shift_key]
         for shift in shifts_:
+            if shift['id'] in shifts_with_errors:
+                # print('Skipping shift with id: {}'.format(shift['id']))
+                continue
             # key = member_name, hours = {string, int}
             shift_summary_map = {}
             shift_date = shift['start_dt']
@@ -373,7 +391,7 @@ def report_shifts(coverage_required_calendar, coverage_offered_calendar, search_
                 coverages_ = coverage_map[coverage_key]
                 for coverage in coverages_:
                     #TODO: If coverage offer started within the shift, but end is beyond end of shift, it will be ignored.  Should be counted!!
-                    if coverage_key >= shift_key and coverage_key <= shift['end_dt']:
+                    if coverage_key >= shift_key and coverage_key < shift['end_dt']:
                         shift_summary_map[coverage['who']] = shift_summary_map.get(coverage['who'], 0) + date_utils.get_hours_parse(coverage['start_dt'], coverage['end_dt'])
                         events_by_hour = expand_event(coverage)
                         for hour_key, events in events_by_hour.items():
@@ -433,17 +451,12 @@ def simple_shift_formatting(final_report_map):
         print("")
 
 def build_email_list(summary):
-    email_addresses = ''
+    email_addresses = []
     for member_name, member_hours in summary.items():
         if member_name in emails.email_map:
-            email_addresses += emails.email_map[member_name] + ','
+            email_addresses.append(emails.email_map[member_name])
 
     return email_addresses
-
-def send_via_email(html_file):
-    email_list = 'gmn314@yahoo.com'
-    send_email(email_list, 'Shift coming up soon', html_file)
-    print('Sent email to {}'.format(email_list))
 
 def collapse_into_like_shifts(merged_shift_map):
     """
@@ -517,12 +530,17 @@ def build_output_path():
         for f in os.listdir(output_root):
             os.remove(os.path.join(output_root, f))
 
-def send_html_email(html_file, summary):
-    email_list = build_email_list(summary)
+def send_html_email(email_list, html_file):
+    cc_list = ['gmn314@yahoo.com']
     if html_file is None or len(html_file) == 0:
-        print('It is zero!!!!!!!!!!!!!!!')
-    send_email(email_list, 'Shift coming up soon', html_file)
-    # print('Sent email to {}'.format(email_list))
+        print('html_file is None or empty, nothing to do')
+    
+    if NO_PROMPT_USER == False and input("Should I send an email to {} recipients to cclist: {}? (y/n) "
+        .format(len(email_list), len(cc_list))) != 'y':
+        print('Not sending email')
+    else:
+        send_email(email_list, cc_list, 'Shift coming up soon', html_file)
+        print('Sent email to {}'.format(email_list))
 
 
 def process_html_results(html_map, final_report_map, should_send_emails):
@@ -537,14 +555,15 @@ def process_html_results(html_map, final_report_map, should_send_emails):
         coverage = shift_and_coverage['coverage']
         summary = shift_and_coverage['shift-summary']
 
+        email_list = build_email_list(summary)
         if should_send_emails:
-            send_html_email(html_map[shift_date], summary)
+            email_list.append('gnowakowski@gmail.com')
+            send_html_email(email_list, html_map[shift_date])
 
         # Also, write the html to a file
-        email_list = build_email_list(summary)
-        shift_date_formatted = dateutil.parser.isoparse(shift['start_dt']).strftime('%A_%Y%m%d%H')
+        shift_date_formatted = dateutil.parser.isoparse(shift['start_dt']).strftime('%A_%Y-%m-%d-hour-%H')
         with open('{}/email_list_{}.txt'.format(output_root, shift_date_formatted), 'w') as f:
-            f.write(email_list)
+            f.write(', '.join(email_list))
 
         output_filename = '{}/shift_report_{}.html'.format(
             output_root,
@@ -555,14 +574,17 @@ def process_html_results(html_map, final_report_map, should_send_emails):
             # print('Wrote: {}'.format(output_filename))
 
 def process_html_errors(error_html):
-    with open('{}/error_list.html'.format(output_root), 'w') as f:
-        f.write(error_html)
+    if error_html is not None:
+        with open('{}/error_list.html'.format(output_root), 'w') as f:
+            f.write(error_html)
     # for shift_date, error_html in html_error_map.items():
     #     shift_date_formatted = dateutil.parser.isoparse(shift_date).strftime('%A_%Y%m%d%H')
     #     with open('{}/error_list_{}.html'.format(output_root, shift_date_formatted), 'w') as f:
     #         f.write(error_html)
 
 def get_command_arguments():
+    global NO_PROMPT_USER
+
     # Instantiate the parser
     parser = argparse.ArgumentParser(description='Optional app description')        
 
@@ -573,15 +595,21 @@ def get_command_arguments():
     parser.add_argument('--end_date', default=(datetime.datetime.now() + datetime.timedelta(days=5)).strftime(date_utils.API_DATE_FORMAT_YMD),
         help='End date of the report in YYYY-MM-DD format', required=False)
 
-    parser.add_argument('--send_email', type=bool, help='Boolean should the email be sent?', required=False, default=False)
+    parser.add_argument('--send_email', help='Boolean should the email be sent?', action='store_true', required=False)
+    parser.add_argument('--no_prompt', help='Boolean should the script prompt?', action='store_true', required=False)
 
     # Parse the arguments
     args = parser.parse_args()
 
+    NO_PROMPT_USER = args.no_prompt
     print('===============================================')
     print('Generating report for {} to {}'.format(args.start_date, args.end_date))
     print('Will send email? {}'.format(args.send_email))
+    print('Prompt user: {}'.format(NO_PROMPT_USER))
     print('===============================================')    
+
+    if NO_PROMPT_USER == False and input("are you sure? (y/n)") != "y":
+        exit()
 
     return args 
 
@@ -600,6 +628,7 @@ if __name__ == '__main__':
 
     final_report_map = report_shifts(coverage_required_calendar, coverage_offered_calendar, args.start_date, args.end_date, errors)
     html_map = html_formatter.format_html_shift_report(final_report_map)
+    # process_html_results(html_map, final_report_map, args.send_email)
     process_html_results(html_map, final_report_map, args.send_email)
     # simple_shift_formatting(final_report_map)
 

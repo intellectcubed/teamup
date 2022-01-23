@@ -130,3 +130,5 @@ dmypy.json
 secrets.sh
 
 shifts/*
+run_log.json
+prod.env

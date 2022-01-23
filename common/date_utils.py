@@ -47,4 +47,6 @@ def get_hours_parse(start_dt, end_dt):
     return get_hours(start_date, end_date)
 
 
+def get_current_day_key():
+    return datetime.datetime.now().strftime(API_DATE_FORMAT_YMD)
 

@@ -6,12 +6,15 @@ import datetime
 import sys
 import os
 import time
-import emails
 from common.email_utils import send_email
 import argparse
 import common.date_utils as date_utils
 import common.utils as utils
 import common.html_formatter as html_formatter
+import re
+from dotenv import load_dotenv
+
+load_dotenv()
 
 api_key = os.environ['TEAMUP_API_KEY']
 
@@ -24,11 +27,22 @@ tango_required_calendar = os.environ['TANGO_REQUIRED_CALENDAR']
 tango_offered_calendar = os.environ['TANGO_OFFERED_CALENDAR']
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 
+## ------------------
+## EMail configuration
+email_address_file = 'emails.json' # file containing email addresses
+email_address_map = None # Loaded from the email_address_file
+shift_error_recipients = ['gmn314@yahoo.com'] # unstaffed shifts are sent to this email address
+error_missing_email_address = ['gmn314@yahoo.com'] # If we cannot look up an email address for a member name, notify the recipients in this list
+
+
+
 ems_reports_root = '/Users/gnowakow/Downloads/ems_reports/'
 output_root = None
 # The below boolean determines if the script will prompt the user to confirm certain actions.
-NO_PROMPT_USER = False
+HEADLESS = False
 
+run_log_fn = 'run_log.json'
+run_log = None
 
 COVERAGE_LEVEL_DESCR_MAP = {
     'crew_chief': 'Crew Chief',
@@ -261,7 +275,6 @@ def report_errors(shift_errors):
         print("") 
 
 
-
 def events_to_map(shifts):
     """
     Convert a list of shifts to a map of shifts
@@ -390,6 +403,8 @@ def report_shifts(coverage_required_calendar, coverage_offered_calendar, search_
             for coverage_key in coverage_keys:
                 coverages_ = coverage_map[coverage_key]
                 for coverage in coverages_:
+                    check_for_email_address(coverage)
+
                     #TODO: If coverage offer started within the shift, but end is beyond end of shift, it will be ignored.  Should be counted!!
                     if coverage_key >= shift_key and coverage_key < shift['end_dt']:
                         shift_summary_map[coverage['who']] = shift_summary_map.get(coverage['who'], 0) + date_utils.get_hours_parse(coverage['start_dt'], coverage['end_dt'])
@@ -440,6 +455,18 @@ def report_shifts(coverage_required_calendar, coverage_offered_calendar, search_
 
     return final_report_map
 
+def check_for_email_address(coverage):
+    """
+    Confirm that email address exists in the email_address_map.  If it does not, check for the presence of a notes field.  If notes exists, and it contains a string like: 
+    "email: email@domain" then add that email address to the email_address_map, and also save it in the file
+    """
+    if 'notes' in coverage and \
+        coverage['notes'] is not None and  \
+        'email: ' in coverage['notes'] and  \
+        coverage['who'] not in email_address_map:
+        add_email_address(coverage['who'], coverage['notes'])
+
+
 def simple_shift_formatting(final_report_map):
     for shift_date, shift_and_coverage in final_report_map.items():
         shift = shift_and_coverage['shift']
@@ -452,11 +479,15 @@ def simple_shift_formatting(final_report_map):
 
 def build_email_list(summary):
     email_addresses = []
-    for member_name, member_hours in summary.items():
-        if member_name in emails.email_map:
-            email_addresses.append(emails.email_map[member_name])
+    no_address_for_member = []
 
-    return email_addresses
+    for member_name, member_hours in summary.items():
+        if member_name in email_address_map:
+            email_addresses.append(email_address_map[member_name])
+        else:
+            no_address_for_member.append(member_name)
+
+    return email_addresses, no_address_for_member
 
 def collapse_into_like_shifts(merged_shift_map):
     """
@@ -530,17 +561,38 @@ def build_output_path():
         for f in os.listdir(output_root):
             os.remove(os.path.join(output_root, f))
 
-def send_html_email(email_list, html_file):
+
+def send_html_email(email_list, sub_category, subject, html_file):
     cc_list = ['gmn314@yahoo.com']
     if html_file is None or len(html_file) == 0:
         print('html_file is None or empty, nothing to do')
-    
-    if NO_PROMPT_USER == False and input("Should I send an email to {} recipients to cclist: {}? (y/n) "
-        .format(len(email_list), len(cc_list))) != 'y':
-        print('Not sending email')
+        return
+
+    if HEADLESS == False:
+        if input("Should I send an email to {} recipients to cclist: {} -- Email has been sent today {}? (y/n) "
+            .format(len(email_list), len(cc_list), was_email_sent_today(sub_category))) != 'y':
+            return
     else:
-        send_email(email_list, cc_list, 'Shift coming up soon', html_file)
-        print('Sent email to {}'.format(email_list))
+        if was_email_sent_today(sub_category) == True:
+            return
+
+    send_email(email_list, cc_list, subject, html_file)
+    save_run_log('sent_email', sub_category, date_utils.get_current_day_key())
+
+
+def save_run_log(category, sub_category, day_key):
+    run_log[category][sub_category][day_key] = True
+    with open(run_log_fn, 'w') as f:
+        f.write(json.dumps(run_log, indent=4, sort_keys=True))
+
+
+def was_email_sent_today(sub_category):
+    if 'sent_email' in run_log:
+        if sub_category in run_log['sent_email']:
+            return date_utils.get_current_day_key() in run_log['sent_email'][sub_category]
+
+    print('No run log found for {} date: {}'.format(sub_category, date_utils.get_current_day_key()))
+    return False
 
 
 def process_html_results(html_map, final_report_map, should_send_emails):
@@ -549,16 +601,23 @@ def process_html_results(html_map, final_report_map, should_send_emails):
         * Create an email mailing list
         * Create an html file
         * If should_send_emails is True, send the email
+
+        Note: If one or more recipients cannot be found for a shift, send an email to the script owner for manual intervention
     """
     for shift_date, shift_and_coverage in final_report_map.items():
         shift = shift_and_coverage['shift']
         coverage = shift_and_coverage['coverage']
         summary = shift_and_coverage['shift-summary']
 
-        email_list = build_email_list(summary)
+        email_list, no_email_found = build_email_list(summary)
+        if len(no_email_found) > 0:
+            email_body = 'Problem while sending email for shift {}.  No email address found for the following members: {}'.format(shift_date, no_email_found)
+            send_email(error_missing_email_address, [], 'TeamUp Script could not find email addresses for members listed', email_body)
+            continue
+
         if should_send_emails:
             email_list.append('gnowakowski@gmail.com')
-            send_html_email(email_list, html_map[shift_date])
+            send_html_email(email_list, 'shift_notification', 'Shift coming up soon', html_map[shift_date])
 
         # Also, write the html to a file
         shift_date_formatted = dateutil.parser.isoparse(shift['start_dt']).strftime('%A_%Y-%m-%d-hour-%H')
@@ -573,8 +632,12 @@ def process_html_results(html_map, final_report_map, should_send_emails):
             f.write(html_map[shift_date])
             # print('Wrote: {}'.format(output_filename))
 
-def process_html_errors(error_html):
+
+def process_html_errors(error_html, should_send_emails):
     if error_html is not None:
+        if should_send_emails:
+            send_html_email(shift_error_recipients, 'error_notification', 'Unstaffed Shifts', error_html)
+
         with open('{}/error_list.html'.format(output_root), 'w') as f:
             f.write(error_html)
     # for shift_date, error_html in html_error_map.items():
@@ -582,8 +645,33 @@ def process_html_errors(error_html):
     #     with open('{}/error_list_{}.html'.format(output_root, shift_date_formatted), 'w') as f:
     #         f.write(error_html)
 
+def read_email_addresses():
+    with open(email_address_file, 'r') as f:
+        return json.load(f)
+
+def add_email_address(name, notes):
+    lst = re.findall('\S+@\S+', notes)
+    if len(lst) == 0:
+        return
+
+    email_address = lst[0]
+    if '</p>' in email_address:
+        email_address = email_address[:-4]
+
+    email_address_map[name] = email_address
+
+    with open(email_address_file, 'w') as f:
+        json.dump(email_address_map, f, indent=4, sort_keys=True)    
+
+    print('Added email address: {} = {}'.format(name, email_address))
+
+
 def get_command_arguments():
-    global NO_PROMPT_USER
+    global HEADLESS
+    global email_address_map
+
+    read_run_log()
+    email_address_map = read_email_addresses()
 
     # Instantiate the parser
     parser = argparse.ArgumentParser(description='Optional app description')        
@@ -596,22 +684,41 @@ def get_command_arguments():
         help='End date of the report in YYYY-MM-DD format', required=False)
 
     parser.add_argument('--send_email', help='Boolean should the email be sent?', action='store_true', required=False)
-    parser.add_argument('--no_prompt', help='Boolean should the script prompt?', action='store_true', required=False)
+    parser.add_argument('--headless', help='Boolean should the script prompt?', action='store_true', required=False)
 
     # Parse the arguments
     args = parser.parse_args()
 
-    NO_PROMPT_USER = args.no_prompt
+    HEADLESS = args.headless
     print('===============================================')
     print('Generating report for {} to {}'.format(args.start_date, args.end_date))
     print('Will send email? {}'.format(args.send_email))
-    print('Prompt user: {}'.format(NO_PROMPT_USER))
+    print('Headless: {}'.format(HEADLESS))
     print('===============================================')    
 
-    if NO_PROMPT_USER == False and input("are you sure? (y/n)") != "y":
+    if HEADLESS == False and input("are you sure? (y/n) ") != "y":
         exit()
 
     return args 
+
+def read_run_log():
+    global run_log
+
+    if not os.path.exists(run_log_fn):
+        new_log = { 
+            'sent_email': {
+                'shift_notification': {
+                }, 
+                'error_notification': {
+                }
+            }
+        }
+        run_log = json.loads(json.dumps(new_log))
+    else:
+        with open(run_log_fn, 'r') as f:
+            run_log = json.load(f)
+            print('Read run log: {}'.format(json.dumps(run_log, indent=4, sort_keys=True)))
+
 
 if __name__ == '__main__':
     args = get_command_arguments()
@@ -624,7 +731,7 @@ if __name__ == '__main__':
     report_errors(errors)
 
     html_errors = html_formatter.format_html_report_errors(errors, args.start_date, 99)
-    process_html_errors(html_errors)
+    process_html_errors(html_errors, args.send_email)
 
     final_report_map = report_shifts(coverage_required_calendar, coverage_offered_calendar, args.start_date, args.end_date, errors)
     html_map = html_formatter.format_html_shift_report(final_report_map)

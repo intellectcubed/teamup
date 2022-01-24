@@ -16,6 +16,9 @@ bradley_gardens_39_
 manville_42_
 martinsville_43_
 somerville_54_
+
+Sample Command Line:
+python create_events.py --calendar_key coverage_required --source_file shifts/feb_2022_coverage_required.csv
 """
 
 import csv

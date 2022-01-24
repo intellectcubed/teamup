@@ -3,6 +3,12 @@ import smtplib
 import os
 import datetime
 
+from dotenv import load_dotenv
+
+BASEDIR = os.path.abspath(os.path.dirname(__file__))
+load_dotenv(os.path.join(BASEDIR, '../prod.env'))
+
+
 # Import the email modules
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -14,8 +20,6 @@ smtp_server = os.environ['SMTP_SERVER']
 
 
 def send_email(to_emails, cc_list, subject, body):
-
-    to_emails = ['gmn314@yahoo.com']
 
     # Create the container (outer) email message.
     msg = MIMEMultipart()

@@ -14,7 +14,8 @@ import common.html_formatter as html_formatter
 import re
 from dotenv import load_dotenv
 
-load_dotenv()
+BASEDIR = os.path.abspath(os.path.dirname(__file__))
+load_dotenv(os.path.join(BASEDIR, 'prod.env'))
 
 api_key = os.environ['TEAMUP_API_KEY']
 

@@ -1,0 +1,23 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+              "dynamodb:BatchGetItem",
+              "dynamodb:GetItem",
+              "dynamodb:Scan",
+              "dynamodb:Query",
+              "dynamodb:BatchWriteItem",
+              "dynamodb:PutItem",
+              "dynamodb:UpdateItem",
+              "dynamodb:DeleteItem"
+            ],
+            "Resource": [
+            "arn:aws:dynamodb:us-east-1:535096317903:table/scheduler_run_log",
+            "arn:aws:dynamodb:us-east-1:535096317903:table/squad_members"
+            ]
+        }
+    ]
+}
+

@@ -12,6 +12,8 @@ target_calendar_key = os.environ['COLLABORATIVE_CALENDAR_ADMIN_KEY']
 coverage_required_calendar = os.environ['COVERAGE_REQUIRED_CALENDAR']
 coverage_offered_calendar = os.environ['COVERAGE_OFFERED_CALENDAR']
 
+agency = 'test_agency'
+
 def create_test_cases(filename, subcalendar_id):
     events = []
     with open(filename, 'r') as f:
@@ -102,7 +104,7 @@ def refresh_test_cases(start_date, end_date):
 
 def run_test_suite(start_date, end_date):
     requireds, coverages, errors, warnings = check_events(coverage_required_calendar, coverage_offered_calendar, start_date, end_date)
-    shift_map = report_shifts(coverage_required_calendar, coverage_offered_calendar, start_date, end_date, errors)
+    shift_map = report_shifts(agency, coverage_required_calendar, coverage_offered_calendar, start_date, end_date, errors)
 
     if validate_results(errors, shift_map) == False:
         print('Test cases failed!!!.  If you validate that test results are correct, delete the __snapshot__ folder and run again.')

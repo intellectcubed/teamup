@@ -3,11 +3,6 @@ import smtplib
 import os
 import datetime
 
-from dotenv import load_dotenv
-
-BASEDIR = os.path.abspath(os.path.dirname(__file__))
-load_dotenv(os.path.join(BASEDIR, '../prod.env'))
-
 
 # Import the email modules
 from email.mime.multipart import MIMEMultipart
@@ -18,8 +13,21 @@ email_account = os.environ['EMAIL_ACCOUNT']
 email_password = os.environ['EMAIL_PASSWORD']
 smtp_server = os.environ['SMTP_SERVER']
 
+class EmailAddressManager:
+
+    def __init__(self, is_file_backed=False):
+        self.is_file_backed = is_file_backed
+
+    def read_addresses_from_file():
+        pass
+
+    def has_address(self, name):
+        pass
 
 def send_email(to_emails, cc_list, subject, body):
+
+    # print('Overriding to_emails {} with {}'.format(to_emails, "gmn314@yahoo.com"))
+    # to_emails = ['gmn314@yahoo.com']
 
     # Create the container (outer) email message.
     msg = MIMEMultipart()
@@ -40,7 +48,7 @@ def send_email(to_emails, cc_list, subject, body):
     s.send_message(msg)
     s.quit()
 
-    print('{} email with subject: {} sent to: {}'.format(datetime.datetime.now(), subject, to_emails))
+    print('{} email with subject: {} sent to: {} cc list: '.format(datetime.datetime.now(), subject, to_emails, cc_list))
 
 # # Define email addresses to use
 # addr_to   = 'xxxx@localdomain.com'

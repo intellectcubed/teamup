@@ -5,12 +5,12 @@ import dateutil
 
 
 template = None
-with open('/Users/gnowakow/Projects/EMS/TeamUp/docs/schedule_template.txt', 'r') as f:
+with open('docs/schedule_template.txt', 'r') as f:
     template = f.read()
 
 unstaffed_template = None
 
-with open('/Users/gnowakow/Projects/EMS/TeamUp/docs/unstaffed_template.txt', 'r') as f:
+with open('docs/unstaffed_template.txt', 'r') as f:
     unstaffed_template = f.read()
 
 

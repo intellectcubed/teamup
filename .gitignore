@@ -131,4 +131,5 @@ secrets.sh
 
 shifts/*
 run_log.json
+lambda_function.zip
 prod.env

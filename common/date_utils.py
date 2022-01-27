@@ -1,5 +1,6 @@
 import dateutil
 import datetime
+import pytz
 
 OUTPUT_FMT_YMDHM = '%m/%d/%Y %H:%M'
 OUTPUT_FMT_YMD = '%B %d, %Y'
@@ -49,4 +50,11 @@ def get_hours_parse(start_dt, end_dt):
 
 def get_current_day_key():
     return datetime.datetime.now().strftime(API_DATE_FORMAT_YMD)
+
+def convert_date_to_ny(date_obj):
+    return date_obj.astimezone(pytz.timezone("America/New_York"))    
+
+def get_now_tz():
+    utc_now = pytz.utc.localize(datetime.datetime.utcnow())
+    return utc_now.astimezone(pytz.timezone("America/New_York"))    
 

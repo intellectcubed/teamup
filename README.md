@@ -8,7 +8,6 @@ Pull events from teamup calendar and ensure that shifts are covered
 source ~/Downloads/env/bin/activate
 source secrets.sh
 
-  pip install --upgrade google-api-python-client google-auth-httplib2 google-auth-oauthlib
 ```
 
 

@@ -1,3 +1,11 @@
+"""
+TODO: Add logging as below: 
+import logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+"""
+
+
 import requests
 import json
 import dateutil.parser
@@ -6,13 +14,16 @@ import sys
 import os
 import time
 from common.correspondence_manager import CorrespondenceManager
-from common.email_utils import send_email
+from common.email_utils import send_html_email, send_email
 import argparse
 import common.date_utils as date_utils
 import common.utils as utils
 import common.html_formatter as html_formatter
 import re
+import traceback
 import boto3
+
+administrator_email = ['gmn314@yahoo.com']
 
 api_key = os.environ['TEAMUP_API_KEY']
 
@@ -29,6 +40,8 @@ s3 = boto3.client('s3')
 s3_bucket = 'shift-reports-{}-535096317903' #substitute agency
 s3_bucket_name = None
 
+errors_for_run = []
+
 dynamodb = boto3.resource('dynamodb')
 
 correspondence_manager = CorrespondenceManager(dynamodb)
@@ -37,11 +50,13 @@ member_table = dynamodb.Table('squad_members')
 
 email_is_live = False
 
+
 ## ------------------
 ## EMail configuration
 email_address_file = 'emails.json' # file containing email addresses
 email_address_map = {} # Cache for email addresses -- 
-shift_error_recipients = ['gmn314@yahoo.com'] # unstaffed shifts are sent to this email address
+# unstaffed shifts are sent to the below addess
+shift_error_recipients = os.getenv('SHIFT_ERROR_RECIPIENTS', 'gmn314@yahoo.com').split(',') # Defaults to gmn314@yahoo.com
 error_missing_email_address = ['gmn314@yahoo.com'] # If we cannot look up an email address for a member name, notify the recipients in this list
 
 email_address_manager = None
@@ -233,7 +248,11 @@ def check_shift_coverage(coverage_events_for_hour):
         warnings.append('Crew too large - 5 maximum')
 
     for event in coverage_events_for_hour:
-        roles[event['custom']['coverage_level'][0]] = roles.get(event['custom']['coverage_level'][0], 0) + 1
+        try:
+            roles[event['custom']['coverage_level'][0]] = roles.get(event['custom']['coverage_level'][0], 0) + 1
+        except KeyError:
+            print('Data Exception: Missing coverage level for event {}'.format(event))
+            raise
 
     # is there a CC?
     if 'crew_chief' in roles:
@@ -242,7 +261,7 @@ def check_shift_coverage(coverage_events_for_hour):
     else:
         missing.append('Crew Chief')
     
-    if not ('driver' in roles or 'emt' in roles):
+    if not ('driver' in roles or 'emt' in roles or ('crew_chief' in roles and roles['crew_chief'] > 1)):
         missing.append('Driver or EMT over 18')
 
     return (missing, warnings)
@@ -431,9 +450,12 @@ def report_shifts(agency, coverage_required_calendar, coverage_offered_calendar,
     for shift_date, shift_and_coverage in merged_shift_map.items():
         shift = shift_and_coverage['shift']
         coverage = shift_and_coverage['coverage']
-        for hour_key, coverages in coverage.items():
-            coverages.sort(key=lambda x: (x['custom']['coverage_level'][0], x['who']))
-            coverage[hour_key] = coverages
+        try:
+            for hour_key, coverages in coverage.items():
+                coverages.sort(key=lambda x: (x['custom']['coverage_level'][0], x['who']))
+                coverage[hour_key] = coverages
+        except KeyError:
+            errors_for_run.append({'shift': shift, 'error': 'No coverage level found for shift'})
 
     if DEBUG_OUTPUT:
         print('+++++')
@@ -606,7 +628,7 @@ def send_html_email(agency, email_recepients, context_date, category, subject, h
     # Get the YEAR_MONTH_DAY_HOUR of the context date
     context_date_str = datetime.datetime.strftime(context_date, date_utils.HOUR_KEY_FMT)
     if should_send_email(agency, email_recepients, category, context_date_str):
-        send_email(email_recepients, cc_list, subject, html_body)
+        send_html_email(email_recepients, cc_list, subject, html_body)
         save_notification_sent(agency, category, context_date_str, email_recepients)
 
 
@@ -774,13 +796,24 @@ def lambda_handler(event, context):
     start_date = datetime.datetime.now().strftime(date_utils.API_DATE_FORMAT_YMD)
     end_date = (datetime.datetime.now() + datetime.timedelta(days=5)).strftime(date_utils.API_DATE_FORMAT_YMD)
 
-    process(agency, start_date, end_date)
+    try:
+        process(agency, start_date, end_date)
+    except Exception as e:
+        invocation_params = 'agency: {} start_date: {} end_date: {}'.format(agency, start_date, end_date)
+        exception_details = traceback.format_exc()
+        email_body = 'Exception in lambda_handler: \n called with: {}\n\n{}'.format(invocation_params, exception_details)
+        send_email(administrator_email, [], 'Exception in check_coverage lambda handler', email_body)
+        exit()
 
 if __name__ == '__main__':
     args = init_from_cmd()
     agency = 'martinsville'
 
-    process(agency, args.start_date, args.end_date)
-
-
-
+    try:
+        process(agency, args.start_date, args.end_date)
+    except Exception as e:
+        invocation_params = 'agency: {} start_date: {} end_date: {}'.format(agency, args.start_date, args.end_date)
+        exception_details = traceback.format_exc()
+        email_body = 'Exception in lambda_handler: \ncalled with: {}\n\n{}'.format(invocation_params, exception_details)
+        send_email(administrator_email, [], 'Exception in check_coverage lambda handler', email_body)
+        exit()

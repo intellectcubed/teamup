@@ -13,18 +13,7 @@ email_account = os.environ['EMAIL_ACCOUNT']
 email_password = os.environ['EMAIL_PASSWORD']
 smtp_server = os.environ['SMTP_SERVER']
 
-class EmailAddressManager:
-
-    def __init__(self, is_file_backed=False):
-        self.is_file_backed = is_file_backed
-
-    def read_addresses_from_file():
-        pass
-
-    def has_address(self, name):
-        pass
-
-def send_email(to_emails, cc_list, subject, body):
+def send_html_email(to_emails, cc_list, subject, body):
 
     # print('Overriding to_emails {} with {}'.format(to_emails, "gmn314@yahoo.com"))
     # to_emails = ['gmn314@yahoo.com']
@@ -50,40 +39,23 @@ def send_email(to_emails, cc_list, subject, body):
 
     print('{} email with subject: {} sent to: {} cc list: '.format(datetime.datetime.now(), subject, to_emails, cc_list))
 
-# # Define email addresses to use
-# addr_to   = 'xxxx@localdomain.com'
-# addr_from = "xxxxx@gmail.com"
+def send_email(to_emails, cc_list, subject, body):
 
-# # Define SMTP email server details
-# smtp_server = 'smtp.gmail.com'
-# smtp_user   = gmail_account
-# smtp_pass   = gmail_password
+    # Create the container (outer) email message.
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = from_email
+    msg['To'] = ', '.join(to_emails)
+    if cc_list is not None and len(cc_list) > 0:
+        msg['Cc'] = ', '.join(cc_list)
 
-# # Construct email
-# msg = MIMEMultipart('alternative')
-# msg['To'] = *emphasized text*addr_to
-# msg['From'] = addr_from
-# msg['Subject'] = 'Test Email From RPi'
 
-# # Create the body of the message (a plain-text and an HTML version).
-# text = "This is a test message.\nText and html."
+    # Send the email via our own SMTP server.
+    s = smtplib.SMTP(smtp_server, 587)
+    s.starttls()
+    s.login(email_account, email_password)
+    print('Sending from{} to{} msg{}'.format(from_email, to_emails, msg.as_string()))
+    s.sendmail(from_email, to_emails, msg.as_string())
+    s.quit()
 
-# (your html code)
-
-# # Record the MIME types of both parts - text/plain and text/html.
-# part1 = MIMEText(text, 'plain')
-# part2 = MIMEText(html, 'html')
-
-# # Attach parts into message container.
-# # According to RFC 2046, the last part of a multipart message, in this case
-# # the HTML message, is best and preferred.
-# msg.attach(part1)
-# msg.attach(part2)
-
-# # Send the message via an SMTP server
-# s = smtplib.SMTP(smtp_server,587)
-# s.ehlo()
-# s.starttls()
-# s.login(smtp_user,smtp_pass)
-# s.sendmail(addr_from, addr_to, msg.as_string())
-# s.quit()
+    print('{} email with subject: {} sent to: {} cc list: '.format(datetime.datetime.now(), subject, to_emails, cc_list))

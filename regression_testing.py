@@ -121,6 +121,7 @@ def delete_all(start_date, end_date):
 
 
 if __name__ == '__main__':
+    # refresh_test_cases('2021-12-01', '2021-12-31')
     run_test_suite('2021-12-01', '2021-12-31')
 
 

@@ -14,7 +14,7 @@ import sys
 import os
 import time
 from common.correspondence_manager import CorrespondenceManager
-from common.email_utils import send_html_email, send_email
+import common.email_utils as email_utils
 import argparse
 import common.date_utils as date_utils
 import common.utils as utils
@@ -628,7 +628,7 @@ def send_html_email(agency, email_recepients, context_date, category, subject, h
     # Get the YEAR_MONTH_DAY_HOUR of the context date
     context_date_str = datetime.datetime.strftime(context_date, date_utils.HOUR_KEY_FMT)
     if should_send_email(agency, email_recepients, category, context_date_str):
-        send_html_email(email_recepients, cc_list, subject, html_body)
+        email_utils.send_html_email(email_recepients, cc_list, subject, html_body)
         save_notification_sent(agency, category, context_date_str, email_recepients)
 
 
@@ -654,7 +654,7 @@ def process_html_results(agency, html_map, final_report_map):
         email_list, no_email_found = build_email_list(summary)
         if len(no_email_found) > 0:
             email_body = 'Problem while sending email for shift {}.  No email address found for the following members: {}'.format(shift_date, no_email_found)
-            send_email(error_missing_email_address, [], 'TeamUp Script could not find email addresses for members listed', email_body)
+            email_utils.send_email(error_missing_email_address, [], 'TeamUp Script could not find email addresses for members listed', email_body)
             continue
 
         send_html_email(agency, email_list, date_utils.convert_date_to_ny(dateutil.parser.isoparse(shift['start_dt'])), 'shift_notification', 'Shift coming up soon', html_map[shift_date])
@@ -802,7 +802,7 @@ def lambda_handler(event, context):
         invocation_params = 'agency: {} start_date: {} end_date: {}'.format(agency, start_date, end_date)
         exception_details = traceback.format_exc()
         email_body = 'Exception in lambda_handler: \n called with: {}\n\n{}'.format(invocation_params, exception_details)
-        send_email(administrator_email, [], 'Exception in check_coverage lambda handler', email_body)
+        email_utils.send_email(administrator_email, [], 'Exception in check_coverage lambda handler', email_body)
         exit()
 
 if __name__ == '__main__':
@@ -815,5 +815,5 @@ if __name__ == '__main__':
         invocation_params = 'agency: {} start_date: {} end_date: {}'.format(agency, args.start_date, args.end_date)
         exception_details = traceback.format_exc()
         email_body = 'Exception in lambda_handler: \ncalled with: {}\n\n{}'.format(invocation_params, exception_details)
-        send_email(administrator_email, [], 'Exception in check_coverage lambda handler', email_body)
+        email_utils.send_email(administrator_email, [], 'Exception in check_coverage lambda handler', email_body)
         exit()

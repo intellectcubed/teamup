@@ -7,6 +7,11 @@ OUTPUT_FMT_YMD = '%B %d, %Y'
 API_DATE_FORMAT_YMD = '%Y-%m-%d'
 HOUR_KEY_FMT = '%Y%m%d%H'
 
+from collections import namedtuple
+
+Range = namedtuple('Range', ['start', 'end'])
+
+
 
 
 def date_simple_format(dt):
@@ -58,3 +63,14 @@ def get_now_tz():
     utc_now = pytz.utc.localize(datetime.datetime.utcnow())
     return utc_now.astimezone(pytz.timezone("America/New_York"))    
 
+def hours_overlap(range1: Range, range2: Range):
+    """
+    Returns the number of hours that range1 and range2 overlap. or Zero if no overlap
+    hours_overlap(Range(start=datetime(2021, 1, 1, 18, 0, 0), end=datetime(2021, 1, 2, 6, 0, 0)), 
+        Range(start=datetime(2021, 1, 1, 19, 0, 0), end=datetime(2021, 1, 1, 20, 0, 0)))
+    """
+    latest_start = max(range1.start, range2.start)
+    earliest_end = min(range1.end, range2.end)
+    delta = ((earliest_end - latest_start).total_seconds()/60/60)
+
+    return max(0, int(delta))

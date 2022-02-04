@@ -72,21 +72,28 @@ def validate_results(errors, shifts) -> bool:
 
     snap_folder = '{}/testing/__snapshot__/'.format(current_dir)
 
+    latest_run = '{}/testing/__latest__'.format(current_dir)
+    if os.path.isdir(latest_run):
+        os.rmdir(latest_run)
+
     if os.path.isdir(snap_folder) == False:
         os.makedirs(snap_folder)
-        save_snapshot(errors, '{}errors.json'.format(snap_folder))
-        save_snapshot(shifts, '{}shifts.json'.format(snap_folder))
+        save_snapshot(errors, '{}/errors.json'.format(snap_folder))
+        save_snapshot(shifts, '{}/shifts.json'.format(snap_folder))
         print('Test results saved -- not validated')
         return True
     else:
+        os.makedirs(latest_run)
         if load_snapshot_compare(errors, '{}errors.json'.format(snap_folder)) == False:
             print('Errors snapshot does not match')
+            save_snapshot(errors, '{}errors.json'.format(latest_run))
             return False
         else:
             print('PASS - Errors snapshot matches')
 
         if load_snapshot_compare(shifts, '{}shifts.json'.format(snap_folder)) == False:
             print('shifts snapshot does not match')
+            save_snapshot(shifts, '{}shifts.json'.format(latest_run))
             return False
         else:
             print('PASS - shifts snapshot matches')

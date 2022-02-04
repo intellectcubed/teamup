@@ -1,6 +1,7 @@
 import dateutil
 import calendar
 import common.date_utils as date_utils
+import os
 
 def create_shift_name(shift):
     start_date = dateutil.parser.isoparse(shift['start_dt'])
@@ -17,3 +18,21 @@ def create_shift_name(shift):
         period_map.get(period),
         start_date.strftime(date_utils.OUTPUT_FMT_YMD))
 
+
+def clear_relative_path(path):
+    current_dir = os.getcwd()
+
+    target_path = path
+
+    if not path.startswith(current_dir):
+        if path.startswith('/'):
+            target_path = os.path.join(current_dir, path[1:])
+        else:
+            target_path = os.path.join(current_dir, path)
+
+    
+
+    if os.path.isdir(target_path):
+        os.rmdir(target_path)
+
+    os.makedirs(target_path)

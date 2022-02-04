@@ -22,6 +22,10 @@ import common.html_formatter as html_formatter
 import re
 import traceback
 import boto3
+from collections import namedtuple
+
+Range = namedtuple('Range', ['start', 'end'])
+
 
 administrator_email = ['gmn314@yahoo.com']
 
@@ -323,7 +327,7 @@ def filter_shifts_before_today(search_start, shifts):
     return filtered_shifts
 
 
-def expand_event(event):
+def expand_event(shift, event):
     """
     Given an event, expand it into a list of events
     return key, [event]
@@ -332,8 +336,9 @@ def expand_event(event):
     # value = event
 
     expanded_events = {}
-    num_hours = date_utils.get_hours_parse(event['start_dt'], event['end_dt']) # for how many hours is this coverage offered?
-    start_date = dateutil.parser.isoparse(event['start_dt'])
+    num_hours = date_utils.hours_overlap(Range(dateutil.parser.isoparse(shift['start_dt']), dateutil.parser.isoparse(shift['end_dt'])), 
+        Range(dateutil.parser.isoparse(event['start_dt']), dateutil.parser.isoparse(event['end_dt'])))
+    start_date = max(dateutil.parser.isoparse(shift['start_dt']), dateutil.parser.isoparse(event['start_dt']))
     for hour in range(num_hours):
         dt = datetime.timedelta(hours=hour)
         coverage_hour = start_date + dt
@@ -344,6 +349,27 @@ def expand_event(event):
     return expanded_events
 
 DEBUG_OUTPUT = False
+
+def is_coverage_in_shift(shift, coverage):
+    shift_start = dateutil.parser.isoparse(shift['start_dt'])
+    shift_end = dateutil.parser.isoparse(shift['end_dt'])
+
+    coverage_start = dateutil.parser.isoparse(coverage['start_dt'])
+    coverage_end = dateutil.parser.isoparse(coverage['end_dt'])
+
+    days_overlap = date_utils.hours_overlap(Range(shift_start, shift_end), Range(coverage_start, coverage_end))
+    return days_overlap > 0
+
+def get_hours_coverage(shift, coverage):
+    shift_start = dateutil.parser.isoparse(shift['start_dt'])
+    shift_end = dateutil.parser.isoparse(shift['end_dt'])
+
+    coverage_start = dateutil.parser.isoparse(coverage['start_dt'])
+    coverage_end = dateutil.parser.isoparse(coverage['end_dt'])
+
+    days_overlap = date_utils.hours_overlap(Range(shift_start, shift_end), Range(coverage_start, coverage_end))
+    return days_overlap
+
 
 def report_shifts(agency, coverage_required_calendar, coverage_offered_calendar, search_start, search_end, errors):
 
@@ -412,12 +438,12 @@ def report_shifts(agency, coverage_required_calendar, coverage_offered_calendar,
     coverage_end = date_utils.parse_date_add_hours(search_end, 24, date_utils.API_DATE_FORMAT_YMD)
 
     coverages = get_events(coverage_start, coverage_end, coverage_offered_calendar)
-
     shift_map = events_to_map(filter_shifts_before_today(search_start, shifts['events']))
     shift_keys = sorted(shift_map.keys())
 
     coverage_map = events_to_map(coverages['events'])
     coverage_keys = sorted(coverage_map.keys())
+
 
     # key = date, value = {shift, [coverage]}
     merged_shift_map = {}
@@ -428,7 +454,6 @@ def report_shifts(agency, coverage_required_calendar, coverage_offered_calendar,
             if shift['id'] in shifts_with_errors:
                 # print('Skipping shift with id: {}'.format(shift['id']))
                 continue
-            # key = member_name, hours = {string, int}
             shift_summary_map = {}
             shift_date = shift['start_dt']
             covers_for_shift = {}
@@ -436,11 +461,9 @@ def report_shifts(agency, coverage_required_calendar, coverage_offered_calendar,
                 coverages_ = coverage_map[coverage_key]
                 for coverage in coverages_:
                     check_for_email_address(agency, coverage)
-
-                    #TODO: If coverage offer started within the shift, but end is beyond end of shift, it will be ignored.  Should be counted!!
-                    if coverage_key >= shift_key and coverage_key < shift['end_dt']:
-                        shift_summary_map[coverage['who']] = shift_summary_map.get(coverage['who'], 0) + date_utils.get_hours_parse(coverage['start_dt'], coverage['end_dt'])
-                        events_by_hour = expand_event(coverage)
+                    if is_coverage_in_shift(shift, coverage):
+                        shift_summary_map[coverage['who']]  = shift_summary_map.get(coverage['who'], 0) + get_hours_coverage(shift, coverage)
+                        events_by_hour = expand_event(shift, coverage)
                         for hour_key, events in events_by_hour.items():
                             covers_for_shift[hour_key] = covers_for_shift.get(hour_key, [])
                             covers_for_shift[hour_key].extend(events)
@@ -478,6 +501,9 @@ def report_shifts(agency, coverage_required_calendar, coverage_offered_calendar,
     }
     
     """
+
+    #TODO: Use logger with debug option
+    # print('MergedShiftMap: \n{}'.format(json.dumps(merged_shift_map)))
 
     final_report_map = collapse_into_like_shifts(merged_shift_map)
 
@@ -809,11 +835,4 @@ if __name__ == '__main__':
     args = init_from_cmd()
     agency = 'martinsville'
 
-    try:
-        process(agency, args.start_date, args.end_date)
-    except Exception as e:
-        invocation_params = 'agency: {} start_date: {} end_date: {}'.format(agency, args.start_date, args.end_date)
-        exception_details = traceback.format_exc()
-        email_body = 'Exception in lambda_handler: \ncalled with: {}\n\n{}'.format(invocation_params, exception_details)
-        email_utils.send_email(administrator_email, [], 'Exception in check_coverage lambda handler', email_body)
-        exit()
+    process(agency, args.start_date, args.end_date)

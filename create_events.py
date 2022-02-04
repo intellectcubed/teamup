@@ -25,6 +25,7 @@ import csv
 import argparse
 import os
 import common.teamup_utils as teamup_utils
+import common.utils as utils
 import sys
 
 
@@ -36,6 +37,8 @@ coverage_required_calendar = os.environ['COVERAGE_REQUIRED_CALENDAR']
 coverage_offered_calendar = os.environ['COVERAGE_OFFERED_CALENDAR']
 tango_required_calendar = os.environ['TANGO_REQUIRED_CALENDAR']
 tango_offered_calendar = os.environ['TANGO_OFFERED_CALENDAR']
+
+test_event_ids_folder = 'test_cases/event_ids'
 
 """
 ### Example how to invoke (Coverage required): 
@@ -126,8 +129,12 @@ def get_command_arguments():
 
     # Required positional argument
 
-    parser.add_argument('--calendar_key', 
+    parser.add_argument('--calendar_key', required=True,
         choices=['coverage_required', 'coverage_offered', 'tango_required', 'tango_offered'])
+
+    parser.add_argument('--get_event_ids', action='store_true')
+    parser.add_argument('--start_date')
+    parser.add_argument('--end_date')
 
     parser.add_argument('--source_file' , help='The name of the file to read from')
 
@@ -136,23 +143,59 @@ def get_command_arguments():
     # Parse the arguments
     args = parser.parse_args()
 
+    # Validate that what was passed in is valid
+    if args.get_event_ids:
+        if args.start_date is None or args.end_date is None:
+            print('Must specify start and end dates when getting event ids')
+            sys.exit(1)
+        if args.calendar_key is None:
+            print('Must specify calendar key when getting event ids')
+            sys.exit(1)
+
+    if args.delete_all:
+        if args.source_file is None:
+            print('Must specify source file containing event_ids')
+            sys.exit(1)
+    
+
     print('===============================================')
-    print('Will read the file: {}'.format(args.source_file))
-    print('And create events in: {}'.format(args.calendar_key))
+    if args.get_event_ids:
+        print('Getting event ids from calendar: {}'.format(args.calendar_key))
+        print('From start date: {} to end date: {}'.format(args.start_date, args.end_date))
+    elif args.delete_all:
+        print('Will delete all ids in the file: {}'.format(args.source_file))
+    else:
+        print('Will read the file: {}'.format(args.source_file))
+        print('And create events in: {}'.format(args.calendar_key))
     print('===============================================')    
 
-    if input("are you sure? (y/n)") != "y":
+    if input("are you sure? (y/n) ") != "y":
         exit()
 
     return args 
 
+def query_save_events(calendar_key, start_date, end_date):
+    if start_date > '2021-12-31':
+        if input('Start date is greater than 2021-12-31, are you sure? (y/n) ') != 'y':
+            exit()  
+
+    utils.clear_relative_path(test_event_ids_folder)
+    print('Calendar key: {}'.format(translate_calendar_key(calendar_key)))
+    events = teamup_utils.get_events(start_date, end_date, translate_calendar_key(calendar_key), api_key)
+
+    print('You have selected the following {} events:'.format(len(events)))
+    for event in events:
+        print('start: {} end: {} who: {}'.format(event['start_dt'], event['end_dt'], event['who']))
+
 
 if __name__ == '__main__':
     args = get_command_arguments()
-    if args.delete_all:
-        delete_all_events(args.source_file, translate_calendar_key(args.calendar_key))
-    else:
-        num_events = add_events(args.source_file, translate_calendar_key(args.calendar_key))
-        print('Created {} events.  Saved event_ids in a file'.format(num_events))
+    if args.get_event_ids:
+        query_save_events(args.calendar_key, args.start_date, args.end_date)
+    # if args.delete_all:
+    #     delete_all_events(args.source_file, translate_calendar_key(args.calendar_key))
+    # else:
+    #     num_events = add_events(args.source_file, translate_calendar_key(args.calendar_key))
+    #     print('Created {} events.  Saved event_ids in a file'.format(num_events))
         
     # add_events(args.source_file, args.calendar_key)

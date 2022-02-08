@@ -179,13 +179,20 @@ def query_save_events(calendar_key, start_date, end_date):
         if input('Start date is greater than 2021-12-31, are you sure? (y/n) ') != 'y':
             exit()  
 
+    filename = '{}/{}_{}_{}.csv'.format(calendar_key, start_date, end_date)
+    if os.path.isfile('{}/{}'.format(test_event_ids_folder, filename)) is True:
+        print('File {} already exists'.format(filename))
+        os.remove('{}/{}'.format(test_event_ids_folder, filename))
+
     utils.clear_relative_path(test_event_ids_folder)
-    print('Calendar key: {}'.format(translate_calendar_key(calendar_key)))
-    events = teamup_utils.get_events(start_date, end_date, translate_calendar_key(calendar_key), api_key)
+
+
+    events = teamup_utils.get_events(start_date, end_date, target_calendar_key, translate_calendar_key(calendar_key), api_key)
 
     print('You have selected the following {} events:'.format(len(events)))
-    for event in events:
-        print('start: {} end: {} who: {}'.format(event['start_dt'], event['end_dt'], event['who']))
+    print('Events: {}'.format(events))
+    for event in events['events']:
+        print('id: {} start: {} end: {} who: {}'.format(event['id'], event['start_dt'], event['end_dt'], event['who']))
 
 
 if __name__ == '__main__':

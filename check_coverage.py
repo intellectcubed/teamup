@@ -23,11 +23,12 @@ import re
 import traceback
 import boto3
 from collections import namedtuple
+import common.teamup_utils as teamup_utils
 
 Range = namedtuple('Range', ['start', 'end'])
 
 
-administrator_email = ['gmn314@yahoo.com']
+administrator_email = [os.getenv('ADMIN_EMAIL', 'gmn314@yahoo.com')]
 
 api_key = os.environ['TEAMUP_API_KEY']
 
@@ -85,14 +86,8 @@ BRIEF_COVERAGE_DESCR_MAP = {
 } 
 
 
-def get_events(start_dt, end_dt, subcalendar_id):
-    headers = {'Content-type': 'application/json', 'Accept': 'text/plain', 'Teamup-Token': api_key}
-    ret = requests.get('/'.join([url, collaborative_calendar_key, 'events']) + '?startDate={}&endDate={}&subcalendarId[]={}'.format(start_dt, end_dt, subcalendar_id), headers=headers)
-    return json.loads(ret.text)
-
-
 def get_coverage_required(sub_calendar_id, start_dt, end_dt):
-    return get_events(start_dt, end_dt, sub_calendar_id)
+    return teamup_utils.get_events(start_dt, end_dt, collaborative_calendar_key, sub_calendar_id, api_key)
 
 
 def get_coverage_offered(sub_calendar_id, start_dt, end_dt):
@@ -103,7 +98,7 @@ def get_coverage_offered(sub_calendar_id, start_dt, end_dt):
     Value: <Coverage Offer Message>
     """
     coverage_offered = {} # Key: date + hour, value: list of events
-    coverages = get_events(start_dt, end_dt, sub_calendar_id)
+    coverages = teamup_utils.get_events(start_dt, end_dt, collaborative_calendar_key, sub_calendar_id, api_key)
     for coverage in coverages['events']:
         num_hours = date_utils.get_hours_parse(coverage['start_dt'], coverage['end_dt']) # for how many hours is this coverage offered?
         start_date = dateutil.parser.isoparse(coverage['start_dt'])
@@ -432,12 +427,12 @@ def report_shifts(agency, coverage_required_calendar, coverage_offered_calendar,
     """
     debug_ts = int(time.time())
 
-    shifts = get_events(search_start, search_end, coverage_required_calendar)
+    shifts = teamup_utils.get_events(search_start, search_end, collaborative_calendar_key, coverage_required_calendar, api_key)
 
     coverage_start = date_utils.parse_date_add_hours(search_start, -24, date_utils.API_DATE_FORMAT_YMD)
     coverage_end = date_utils.parse_date_add_hours(search_end, 24, date_utils.API_DATE_FORMAT_YMD)
 
-    coverages = get_events(coverage_start, coverage_end, coverage_offered_calendar)
+    coverages = teamup_utils.get_events(coverage_start, coverage_end, collaborative_calendar_key, coverage_offered_calendar, api_key)
     shift_map = events_to_map(filter_shifts_before_today(search_start, shifts['events']))
     shift_keys = sorted(shift_map.keys())
 
@@ -622,11 +617,11 @@ def are_names_equal(previous_names, coverages):
     return previous_names == names
 
 
-def should_send_email(agency, email_recepients, category, context_date_str):
+def should_send_email(agency, coverage, email_recepients, category, context_date_str):
     if not email_is_live:
         return False
 
-    notification_was_sent = correspondence_manager.was_notification_sent(agency, category, context_date_str, email_recepients)
+    notification_was_sent = correspondence_manager.was_notification_sent(agency, category, coverage, context_date_str, email_recepients)
 
     # If not HEADLESS, prompt will override whether it was already sent!
     if HEADLESS == False:
@@ -640,10 +635,12 @@ def should_send_email(agency, email_recepients, category, context_date_str):
     return not notification_was_sent
 
 
-def send_html_email(agency, email_recepients, context_date, category, subject, html_body):
+def send_html_email(agency, summary, email_recepients, context_date, category, subject, html_body):
     """
     if category = 'shift_notification', context_date is the start date of the shift
     if category = 'error_notification', context_date is the date of the error
+
+    coverage = entire coverage for the given shift.  **Is always None for error notifications**
 
     """
     cc_list = []
@@ -653,13 +650,9 @@ def send_html_email(agency, email_recepients, context_date, category, subject, h
 
     # Get the YEAR_MONTH_DAY_HOUR of the context date
     context_date_str = datetime.datetime.strftime(context_date, date_utils.HOUR_KEY_FMT)
-    if should_send_email(agency, email_recepients, category, context_date_str):
+    if should_send_email(agency, summary, email_recepients, category, context_date_str):
         email_utils.send_html_email(email_recepients, cc_list, subject, html_body)
-        save_notification_sent(agency, category, context_date_str, email_recepients)
-
-
-def save_notification_sent(agency, category, shift_start, email_list):
-    return correspondence_manager.save_notification_sent(agency, category, shift_start, email_list)
+        correspondence_manager.save_notification_sent(agency, category, summary, context_date_str, email_recepients)
 
 
 def process_html_results(agency, html_map, final_report_map):
@@ -677,13 +670,16 @@ def process_html_results(agency, html_map, final_report_map):
         coverage = shift_and_coverage['coverage']
         summary = shift_and_coverage['shift-summary']
 
+        # print('Here is the coverage: {}'.format(json.dumps(coverage)))
+        print('Here is the summary: {}'.format(json.dumps(summary)))
+
         email_list, no_email_found = build_email_list(summary)
         if len(no_email_found) > 0:
             email_body = 'Problem while sending email for shift {}.  No email address found for the following members: {}'.format(shift_date, no_email_found)
             email_utils.send_email(error_missing_email_address, [], 'TeamUp Script could not find email addresses for members listed', email_body)
             continue
 
-        send_html_email(agency, email_list, date_utils.convert_date_to_ny(dateutil.parser.isoparse(shift['start_dt'])), 'shift_notification', 'Shift coming up soon', html_map[shift_date])
+        send_html_email(agency, summary, email_list, date_utils.convert_date_to_ny(dateutil.parser.isoparse(shift['start_dt'])), 'shift_notification', 'Shift coming up soon', html_map[shift_date])
 
         # Also, write the html to a file
         write_resulting_html('shift_report_{}.html'.format(shift_date_formatted), html_map[shift_date])
@@ -691,7 +687,7 @@ def process_html_results(agency, html_map, final_report_map):
 
 def process_html_errors(agency, error_html):
     if error_html is not None:
-        send_html_email(agency, shift_error_recipients, date_utils.get_now_tz(), 'error_notification', 'Unstaffed Shifts', error_html)
+        send_html_email(agency, None, shift_error_recipients, date_utils.get_now_tz(), 'error_notification', 'Unstaffed Shifts', error_html)
 
         write_resulting_html('error_list.html', error_html)
 

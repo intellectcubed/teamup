@@ -25,9 +25,12 @@ class CorrespondenceManager:
 
 
         notification_key = self.make_notification_key(agency, category, key_date)
-        print('Date for key: {} date for sent_date: {} KEY: {}'.format(key_date, date_sent, notification_key))
-        self.schedule_notification_table.put_item(Item={'agency_category_start': notification_key, 
-            'date_sent': date_sent, 'timestamp': timestamp, 'recipients': email_list, 'summary': json.dumps(summary)})
+        # print('Date for key: {} date for sent_date: {} KEY: {}'.format(key_date, date_sent, notification_key))
+        item = {'agency_category_start': notification_key, 
+            'date_sent': date_sent, 'timestamp': timestamp, 'recipients': email_list}
+        if summary is not None: 
+            item['summary'] = json.dumps(summary)
+        self.schedule_notification_table.put_item(Item=item)
         return notification_key, date_sent
 
     def was_notification_sent(self, agency, category, summary, shift_start, email_list):

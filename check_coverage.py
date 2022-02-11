@@ -670,9 +670,6 @@ def process_html_results(agency, html_map, final_report_map):
         coverage = shift_and_coverage['coverage']
         summary = shift_and_coverage['shift-summary']
 
-        # print('Here is the coverage: {}'.format(json.dumps(coverage)))
-        print('Here is the summary: {}'.format(json.dumps(summary)))
-
         email_list, no_email_found = build_email_list(summary)
         if len(no_email_found) > 0:
             email_body = 'Problem while sending email for shift {}.  No email address found for the following members: {}'.format(shift_date, no_email_found)

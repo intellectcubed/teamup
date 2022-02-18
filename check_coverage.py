@@ -4,13 +4,9 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 """
-
-
-import requests
 import json
 import dateutil.parser
 import datetime
-import sys
 import os
 import time
 from common.correspondence_manager import CorrespondenceManager

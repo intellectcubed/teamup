@@ -22,7 +22,41 @@ def get_events(start_dt, end_dt, calendar_key, subcalendar_id, api_key):
     if 'error' in response:
         print('Code: {} Error: {}'.format(ret.status_code, ret.text))
         raise Exception('Error getting events')
+    round_start_end_dates(response)
     return response
+
+
+def round_start_end_dates(response):
+    """
+    Given a list of events in the response object, round the hours to the nearest half hour
+    """
+    for event in response['events']:
+        event['start_dt'] = round_date(event['start_dt'])
+        event['end_dt'] = round_date(event['end_dt'])
+
+def round_date(date):
+    """
+    Given a date in the format YYYY-MM-DDTHH:MM:SS.SSSZ, round the hours to the nearest half hour
+    """
+    date_split = date.split('T')
+    # print('Rounding: {} to {}'.format(date, round_time(date_split[1])))
+    date_split[1] = round_time(date_split[1])
+    return 'T'.join(date_split)
+
+def round_time(time):
+    """
+    Given a time in the format HH:MM:SS.SSSZ, round the hours to the nearest half hour
+    """
+    time_split = time.split(':')
+    if int(time_split[1]) == 0:
+        return time
+    else:
+        if int(time_split[1]) >= 30:
+            time_split[0] = str(int(time_split[0]) + 1)
+            time_split[1] = '00'
+        else:
+            time_split[1] = '30'
+        return ':'.join(time_split)
 
 
 def delete_event(event_id, calendar_key, api_key):

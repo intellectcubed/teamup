@@ -24,6 +24,7 @@ stored in **prod.env** in the format: ```VARIABLE=VALUE```
 
 
 ## Sample Command line
+python check_coverage.py
 python check_coverage.py --start_date 2021-12-01 --end_date 2021-12-31 --send_email
 
 ### When running on server (headless)

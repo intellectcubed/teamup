@@ -41,24 +41,28 @@ tango_offered_calendar = os.environ['TANGO_OFFERED_CALENDAR']
 test_event_ids_folder = 'test_cases/event_ids'
 
 """
-### Example how to invoke (Coverage required): 
+### To create events (Coverage required): 
 python3 create_events.py --calendar coverage_required --source_file /Users/gnowakow/Projects/EMS/TeamUp/shifts/feb_2022_coverage_required.csv
 
 Expected input for coverage_required calendar: [start_dt, end_dt, title]
-Example: 2022-02-01T18:00:00-05:00,2022-02-02T06:00:00-05:00,MRS Duty: Covering 34 (Green Knoll) and 35 (Finderne)
+Example: 2022-02-01T18:00:00,2022-02-02T06:00:00,MRS Duty: Covering 34 (Green Knoll) and 35 (Finderne)
 
 
-### Example how to invoke (Coverage offered):
+### To create events (Coverage offered):
 python3 create_events.py --calendar coverage_offered --source_file /Users/gnowakow/Projects/EMS/TeamUp/shifts/feb_2022_coverage_offered.csv
 
 Expected input for coverage_offered: [start_dt, end_dt, role, who]
-Example: 2022-02-14T18:00:00-05:00,2022-02-15T00:00:00-05:00,crew_chief,Jim Ross
+Example: 2022-02-14T18:00:00,2022-02-15T00:00:00,crew_chief,Jim Ross
 
 
 ### To delete records created: 
 
 python3 create_events.py --calendar coverage_required --source_file /Users/gnowakow/Projects/EMS/TeamUp/shifts/feb_2022_coverage_required_event_ids.csv --delete_all
 
+
+### Query and delete events:
+python3 create_events.py --calendar coverage_required --start_date 2022-02-01 --end_date 2022-02-30 --get_event_ids
+python3 create_events.py --calendar coverage_required --source_file /Users/gnowakow/Projects/EMS/TeamUp/shifts/coverage_required_2022-03-01_2022-03-31.csv --delete_all
 
 """
 
@@ -91,6 +95,9 @@ def row_to_event(sub_calendar_id, row):
             'subcalendar_id': sub_calendar_id,
             'start_dt': row[0],
             'end_dt': row[1],
+            'custom': {
+                'coverage_level': 'do_not_select'
+            },            
             'title': row[2]
         }
     elif sub_calendar_id == translate_calendar_key('coverage_offered'):
@@ -103,6 +110,8 @@ def row_to_event(sub_calendar_id, row):
             },
             'who': row[3]
         }
+    else:
+        raise Exception('Invalid sub calendar id: {}'.format(sub_calendar_id))
 
 def translate_calendar_key(calendar_key):
     if calendar_key == 'coverage_required':
@@ -117,11 +126,11 @@ def translate_calendar_key(calendar_key):
         raise Exception('Invalid calendar key: {}'.format(calendar_key))
 
 
-def delete_all_events(id_file, sub_calendar_key):
+def delete_all_events(id_file):
     with open(id_file, 'r') as f:
         for event_id in f:
-            print('Deleting event: {}'.format(event_id))
-            teamup_utils.delete_event(event_id, sub_calendar_key, api_key)
+            # print('Deleting event: {} subcal: {} api-key: {}'.format(event_id, sub_calendar_key, api_key))
+            teamup_utils.delete_event(event_id.strip(), target_calendar_key, api_key)
 
 def get_command_arguments():
     # Instantiate the parser
@@ -179,30 +188,32 @@ def query_save_events(calendar_key, start_date, end_date):
         if input('Start date is greater than 2021-12-31, are you sure? (y/n) ') != 'y':
             exit()  
 
-    filename = '{}/{}_{}_{}.csv'.format(calendar_key, start_date, end_date)
-    if os.path.isfile('{}/{}'.format(test_event_ids_folder, filename)) is True:
+    current_directory = os. getcwd()
+    filename = '{}/shifts/{}_{}_{}.csv'.format(current_directory, calendar_key, start_date, end_date)
+    if os.path.isfile(filename) is True:
         print('File {} already exists'.format(filename))
-        os.remove('{}/{}'.format(test_event_ids_folder, filename))
+        os.remove(filename)
 
     utils.clear_relative_path(test_event_ids_folder)
-
-
     events = teamup_utils.get_events(start_date, end_date, target_calendar_key, translate_calendar_key(calendar_key), api_key)
 
-    print('You have selected the following {} events:'.format(len(events)))
-    print('Events: {}'.format(events))
-    for event in events['events']:
-        print('id: {} start: {} end: {} who: {}'.format(event['id'], event['start_dt'], event['end_dt'], event['who']))
+    with open(filename, 'w') as f:
+        for event in events['events']:
+            print('id: {} start: {} end: {} who: {} title: {}'.format(event['id'], event['start_dt'], event['end_dt'], event['who'], event['title']))
+            f.write(event['id'] + '\n')
 
+    print('created file: {}'.format(filename))
 
 if __name__ == '__main__':
     args = get_command_arguments()
+
     if args.get_event_ids:
         query_save_events(args.calendar_key, args.start_date, args.end_date)
-    # if args.delete_all:
-    #     delete_all_events(args.source_file, translate_calendar_key(args.calendar_key))
-    # else:
-    #     num_events = add_events(args.source_file, translate_calendar_key(args.calendar_key))
-    #     print('Created {} events.  Saved event_ids in a file'.format(num_events))
+    else:
+        if args.delete_all:
+            delete_all_events(args.source_file)
+        else:
+            num_events = add_events(args.source_file, translate_calendar_key(args.calendar_key))
+            print('Created {} events.  Saved event_ids in a file'.format(num_events))
         
-    # add_events(args.source_file, args.calendar_key)
+

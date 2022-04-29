@@ -2,6 +2,14 @@ import dateutil
 import calendar
 import common.date_utils as date_utils
 import os
+from enum import Enum
+
+
+class NotificationCategory(Enum):
+    SHIFT_NOTIFICATION = 'shiftnotification'
+    ERROR_NOTIFICATION = 'errornotification'
+
+
 
 def create_shift_name(shift):
     start_date = dateutil.parser.isoparse(shift['start_dt'])

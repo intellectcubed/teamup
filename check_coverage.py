@@ -4,13 +4,14 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 """
+# from http.client import _DataType
 import json
 import dateutil.parser
 import datetime
 import os
 import time
 from common.correspondence_manager import CorrespondenceManager
-import common.email_utils as email_utils
+from common.email_utils import EmailUtil
 import argparse
 import common.date_utils as date_utils
 import common.utils as utils
@@ -18,60 +19,76 @@ import common.html_formatter as html_formatter
 import re
 import traceback
 import boto3
+from boto3.dynamodb.conditions import Key
 from collections import namedtuple
 import common.teamup_utils as teamup_utils
+from common.config_data import RunConfig, RunTrigger, run_config_from_json, CoverageLevels
+from common.utils import NotificationCategory
+
+
+# from dataclasses import dataclass
+
+# @dataclass
+# class MissingRange:
+#     start_dt: datetime.datetime
+#     end_dt: datetime.datetime
+#     missing_crew: dict
+
+# @dataclass
+# class Shift:
+#     start_dt: datetime.datetime
+#     end_dt: datetime.datetime
+#     coverage_level: str
+#     coverage_offered: list
+#     coverage_required: list
+#     coverage_missing: list
+#     coverage_warnings: list
+
+# @dataclass
+# class CoverageOffered:
+#     start_dt: datetime.datetime
+#     end_dt: datetime.datetime
+#     coverage_level: str
+#     coverage_offered: list
+#     coverage_required: list
+#     coverage_missing: list
+#     coverage_warnings: list
+ 
+
+# Global configuration
+run_config: RunConfig
 
 Range = namedtuple('Range', ['start', 'end'])
 
-
-administrator_email = [os.getenv('ADMIN_EMAIL', 'gmn314@yahoo.com')]
-
-api_key = os.environ['TEAMUP_API_KEY']
-
 url = 'https://api.teamup.com'
-collaborative_calendar_key = os.environ['COLLABORATIVE_CALENDAR_KEY_RO']
-
-coverage_required_calendar = os.environ['COVERAGE_REQUIRED_CALENDAR']
-coverage_offered_calendar = os.environ['COVERAGE_OFFERED_CALENDAR']
-tango_required_calendar = os.environ['TANGO_REQUIRED_CALENDAR']
-tango_offered_calendar = os.environ['TANGO_OFFERED_CALENDAR']
-
 
 s3 = boto3.client('s3')
 s3_bucket = 'shift-reports-{}-535096317903' #substitute agency
 s3_bucket_name = None
 
+developer_email = 'gmn314@yahoo.com'
+
 errors_for_run = []
+
+correspondence_control_table_name = os.environ.get('CORRESPONDENCE_CONTROL_TABLE_NAME', 'schedule_notifications')
+squad_member_table_name = os.environ.get('SQUAD_MEMBER_TABLE', 'squad_members')
+agency_configuration_table_name = os.environ.get("AGENCY_CONFIGURATION_TABLE_NAME", "agency_configuration")
 
 dynamodb = boto3.resource('dynamodb')
 
-correspondence_manager = CorrespondenceManager(dynamodb)
+correspondence_manager = CorrespondenceManager(dynamodb, correspondence_control_table_name)
+email = None
 
-member_table = dynamodb.Table('squad_members')
+member_table = dynamodb.Table(squad_member_table_name)
 
 email_is_live = False
 
-
 ## ------------------
 ## EMail configuration
-email_address_file = 'emails.json' # file containing email addresses
 email_address_map = {} # Cache for email addresses -- 
-# unstaffed shifts are sent to the below addess
-shift_error_recipients = os.getenv('SHIFT_ERROR_RECIPIENTS', 'gmn314@yahoo.com').split(',') # Defaults to gmn314@yahoo.com
-error_missing_email_address = ['gmn314@yahoo.com'] # If we cannot look up an email address for a member name, notify the recipients in this list
-
-email_address_manager = None
 
 # The below boolean determines if the script will prompt the user to confirm certain actions.
 HEADLESS = False
-
-COVERAGE_LEVEL_DESCR_MAP = {
-    'crew_chief': 'Crew Chief',
-    'emt': 'EMT over 18',
-    'emt_under_18_': 'EMT under 18',
-    'driver': 'Driver',
-    'assistant': 'Assistant'
-} 
 
 BRIEF_COVERAGE_DESCR_MAP = {
     'crew_chief': 'CC',
@@ -81,12 +98,14 @@ BRIEF_COVERAGE_DESCR_MAP = {
     'assistant': 'Assistant'
 } 
 
+def get_coverage_required(start_dt, end_dt):
+    return teamup_utils.get_events(start_dt, end_dt, 
+        run_config.teamup_config.collaborative_calendar_key_ro,
+        run_config.teamup_config.coverage_required_calendar,
+        run_config.teamup_config.teamup_api_key);
 
-def get_coverage_required(sub_calendar_id, start_dt, end_dt):
-    return teamup_utils.get_events(start_dt, end_dt, collaborative_calendar_key, sub_calendar_id, api_key)
 
-
-def get_coverage_offered(sub_calendar_id, start_dt, end_dt):
+def get_coverage_offered(start_dt, end_dt):
     """
     Get all coverage offered events.  For each event, expand the hours into their own keys in the dict.
     For example 
@@ -94,7 +113,11 @@ def get_coverage_offered(sub_calendar_id, start_dt, end_dt):
     Value: <Coverage Offer Message>
     """
     coverage_offered = {} # Key: date + hour, value: list of events
-    coverages = teamup_utils.get_events(start_dt, end_dt, collaborative_calendar_key, sub_calendar_id, api_key)
+    coverages = teamup_utils.get_events(start_dt, end_dt, 
+        run_config.teamup_config.collaborative_calendar_key_ro,
+        run_config.teamup_config.coverage_offered_calendar,
+        run_config.teamup_config.teamup_api_key)
+
     for coverage in coverages['events']:
         num_hours = date_utils.get_hours_parse(coverage['start_dt'], coverage['end_dt']) # for how many hours is this coverage offered?
         start_date = dateutil.parser.isoparse(coverage['start_dt'])
@@ -107,24 +130,25 @@ def get_coverage_offered(sub_calendar_id, start_dt, end_dt):
 
     return coverage_offered
 
-def check_events(required_subcalendar_id, offered_subcalendar_id, start_dt, end_dt):
+
+def check_events(start_dt, end_dt):
     """
     Check if the coverage offered is sufficient for the required coverage.
     """
-    requireds = get_coverage_required(required_subcalendar_id, start_dt, end_dt)
+    requireds = get_coverage_required(start_dt, end_dt)
 
     # Note: When getting the coverage offered, we will start from the previous day (1 day before start_dt) to get all of the events
     # that started the day before, and ended today, and one day after, to get all that started today but end tomorrow.
     start_before = date_utils.parse_date_add_hours(start_dt, -1*24, date_utils.API_DATE_FORMAT_YMD).strftime(date_utils.API_DATE_FORMAT_YMD)
     end_after = date_utils.parse_date_add_hours(end_dt, 2*24, date_utils.API_DATE_FORMAT_YMD).strftime(date_utils.API_DATE_FORMAT_YMD)
 
-    coverages = get_coverage_offered(offered_subcalendar_id, start_before, end_after)
+    coverages = get_coverage_offered(start_before, end_after)
 
     shift_errors = []
     shift_warnings = []
 
     for required in requireds['events']:
-        missing, warnings = check_staffing(required_subcalendar_id, required, coverages)
+        missing, warnings = check_staffing(required, coverages, run_config.teamup_config.level_mappings)
         # shift = '{} - {}'.format(required['start_dt'], required['end_dt'])
         if len(missing) > 0:
             shift_errors.append({'shift': required, 'errors': missing, 'warnings': warnings})
@@ -135,7 +159,7 @@ def check_events(required_subcalendar_id, offered_subcalendar_id, start_dt, end_
     return (requireds, coverages, shift_errors, shift_warnings)
 
 
-def check_staffing(required_subcalendar_id, required_coverage, coverage_events):
+def check_staffing(required_coverage, coverage_events, level_mappings):
     """
     Check if the coverage offered is sufficient for the required coverage.
     Return tuple: (list of required coverage, warnings)
@@ -150,7 +174,7 @@ def check_staffing(required_subcalendar_id, required_coverage, coverage_events):
         coverage_hour = start_date + dt
         date_hour_key = date_utils.date_to_key(coverage_hour)
         coverage_events_for_hour = coverage_events.get(date_hour_key, [])
-        missing, warnings = is_hour_staffed(required_subcalendar_id, coverage_events_for_hour)
+        missing, warnings = is_hour_staffed(coverage_events_for_hour, level_mappings)
 
         if len(missing) > 0:
             crew_missing[date_hour_key] = missing
@@ -202,39 +226,15 @@ def consolidate_hours(crew_missing):
     return missing_ranges
 
 
-def is_hour_staffed(subcalendar_id, coverage_events_for_hour):
+def is_hour_staffed(coverage_events_for_hour, level_mappings):
     """
     Logic for determining if a shift is correctly staffed.  The required subcalendar id determines which logic to apply
+    coverage_events_for_hour is a list of coverage events for the hour (a list of CoverageOffered JSON objects)
     """
-
-    if subcalendar_id == coverage_required_calendar:
-        return check_shift_coverage(coverage_events_for_hour)
-    elif subcalendar_id == tango_required_calendar:
-        return check_tango_coverage(coverage_events_for_hour)
+    return check_shift_coverage(coverage_events_for_hour, level_mappings)
 
 
-def check_tango_coverage(coverage_events_for_hour):
-    """
-    Check if the coverage offered is sufficient for the required coverage.
-    Return tuple: (list of required coverage, warnings)
-    """
-    tango_missing = []
-    tango_warnings = []
-
-    num_tangos = 0
-    for event in coverage_events_for_hour:
-        if event['custom']['coverage_level'][0] == 'station_95_supervisor':
-            num_tangos += 1
-
-    if num_tangos < 1:
-        tango_missing.append('Missing tango coverage')
-
-    if num_tangos > 1:
-        tango_warnings.append('Too many tangos')
-
-    return (tango_missing, tango_warnings)
-
-def check_shift_coverage(coverage_events_for_hour):
+def check_shift_coverage(coverage_events_for_hour, level_mappings):
     warnings = []
     missing = []
     roles = {}
@@ -250,13 +250,14 @@ def check_shift_coverage(coverage_events_for_hour):
             raise
 
     # is there a CC?
-    if 'crew_chief' in roles:
-        if roles['crew_chief'] > 1:
+    if level_mappings[CoverageLevels.CREW_CHIEF.value] in roles:
+        if roles[level_mappings[CoverageLevels.CREW_CHIEF.value]] > 1:
             warnings.append('Warning: more than one CC')
     else:
-        missing.append('Crew Chief')
-    
-    if not ('driver' in roles or 'emt' in roles or ('crew_chief' in roles and roles['crew_chief'] > 1)):
+        missing.append(CoverageLevels.CREW_CHIEF.value)
+
+    if not (level_mappings[CoverageLevels.DRIVER.value] in roles or level_mappings[CoverageLevels.EMT_OVER_18.value] in roles or 
+        (level_mappings[CoverageLevels.CREW_CHIEF.value] in roles and roles[level_mappings[CoverageLevels.CREW_CHIEF.value]] > 1)):
         missing.append('Driver or EMT over 18')
 
     return (missing, warnings)
@@ -285,7 +286,7 @@ def format_error_report(shift_errors):
 def report_errors(shift_errors):
     if len(shift_errors) == 0:
         return
-    print('The folowing shifts have errors:')
+    print('The folowing shifts have errors: '.format(len(shift_errors)))
     for shift in shift_errors:
         print('Shift: ({}) {} - {}'.format(utils.create_shift_name(shift['shift']), date_utils.date_simple_format(shift['shift']['start_dt']), 
             date_utils.date_simple_format(shift['shift']['end_dt'])))
@@ -362,13 +363,12 @@ def get_hours_coverage(shift, coverage):
     return days_overlap
 
 
-def report_shifts(agency, coverage_required_calendar, coverage_offered_calendar, search_start, search_end, errors):
+def report_shifts(search_start, search_end, errors):
 
     shifts_with_errors = set()
 
     for shift in errors:
         shifts_with_errors.add(shift['shift']['id'])
-
     
     """
     Returning: 
@@ -423,12 +423,14 @@ def report_shifts(agency, coverage_required_calendar, coverage_offered_calendar,
     """
     debug_ts = int(time.time())
 
-    shifts = teamup_utils.get_events(search_start, search_end, collaborative_calendar_key, coverage_required_calendar, api_key)
+    shifts = teamup_utils.get_events(search_start, search_end, run_config.teamup_config.collaborative_calendar_key_ro, 
+        run_config.teamup_config.coverage_required_calendar, run_config.teamup_config.teamup_api_key)
 
     coverage_start = date_utils.parse_date_add_hours(search_start, -24, date_utils.API_DATE_FORMAT_YMD)
     coverage_end = date_utils.parse_date_add_hours(search_end, 24, date_utils.API_DATE_FORMAT_YMD)
 
-    coverages = teamup_utils.get_events(coverage_start, coverage_end, collaborative_calendar_key, coverage_offered_calendar, api_key)
+    coverages = teamup_utils.get_events(coverage_start, coverage_end, run_config.teamup_config.collaborative_calendar_key_ro, 
+        run_config.teamup_config.coverage_offered_calendar, run_config.teamup_config.teamup_api_key)
     shift_map = events_to_map(filter_shifts_before_today(search_start, shifts['events']))
     shift_keys = sorted(shift_map.keys())
 
@@ -451,7 +453,7 @@ def report_shifts(agency, coverage_required_calendar, coverage_offered_calendar,
             for coverage_key in coverage_keys:
                 coverages_ = coverage_map[coverage_key]
                 for coverage in coverages_:
-                    check_for_email_address(agency, coverage)
+                    check_for_email_address(run_config.agency, coverage)
                     if is_coverage_in_shift(shift, coverage):
                         shift_summary_map[coverage['who']]  = shift_summary_map.get(coverage['who'], 0) + get_hours_coverage(shift, coverage)
                         events_by_hour = expand_event(shift, coverage)
@@ -613,11 +615,17 @@ def are_names_equal(previous_names, coverages):
     return previous_names == names
 
 
-def should_send_email(agency, coverage, email_recepients, category, context_date_str):
+def should_send_email(agency, report_type, coverage, email_recepients, category, context_date_str):
     if not email_is_live:
         return False
 
-    notification_was_sent = correspondence_manager.was_notification_sent(agency, category, coverage, context_date_str, email_recepients)
+    notification_was_sent = correspondence_manager.was_notification_sent(agency, category, report_type, coverage, context_date_str, email_recepients)
+
+    # For shift notifications, we want to constrain to sending only if the shift_start is within NOTIFY_SHIFT_WITHIN_DAYS days
+    # Error notifications are sent regardless of how many days away the shift_start is
+    if category == NotificationCategory.SHIFT_NOTIFICATION:
+        if date_utils.get_days_diff(date_utils.key_to_date(context_date_str),  datetime.datetime.today()) > run_config.agency_settings.notify_shift_within_days:
+            return False
 
     # If not HEADLESS, prompt will override whether it was already sent!
     if HEADLESS == False:
@@ -631,7 +639,7 @@ def should_send_email(agency, coverage, email_recepients, category, context_date
     return not notification_was_sent
 
 
-def send_html_email(agency, summary, email_recepients, context_date, category, subject, html_body):
+def send_html_email(agency, report_type, summary, email_recepients, context_date, category: NotificationCategory, subject, html_body):
     """
     if category = 'shift_notification', context_date is the start date of the shift
     if category = 'error_notification', context_date is the date of the error
@@ -646,12 +654,12 @@ def send_html_email(agency, summary, email_recepients, context_date, category, s
 
     # Get the YEAR_MONTH_DAY_HOUR of the context date
     context_date_str = datetime.datetime.strftime(context_date, date_utils.HOUR_KEY_FMT)
-    if should_send_email(agency, summary, email_recepients, category, context_date_str):
-        email_utils.send_html_email(email_recepients, cc_list, subject, html_body)
-        correspondence_manager.save_notification_sent(agency, category, summary, context_date_str, email_recepients)
+    if should_send_email(agency, report_type, summary, email_recepients, category, context_date_str):
+        email.send_html_email(email_recepients, cc_list, subject, html_body)
+        correspondence_manager.save_notification_sent(agency, report_type, category, summary, context_date_str, email_recepients)
 
 
-def process_html_results(agency, html_map, final_report_map):
+def process_html_results(agency, report_type, html_map, final_report_map, admin_email_address):
     """
     Iterate through the final_report_map.  For each shift:
         * Create an email mailing list
@@ -669,19 +677,20 @@ def process_html_results(agency, html_map, final_report_map):
         email_list, no_email_found = build_email_list(summary)
         if len(no_email_found) > 0:
             email_body = 'Problem while sending email for shift {}.  No email address found for the following members: {}'.format(shift_date, no_email_found)
-            email_utils.send_email(error_missing_email_address, [], 'TeamUp Script could not find email addresses for members listed', email_body)
+            email.send_email(admin_email_address, [], 'TeamUp Script could not find email addresses for members listed', email_body)
             continue
 
-        send_html_email(agency, summary, email_list, date_utils.convert_date_to_ny(dateutil.parser.isoparse(shift['start_dt'])), 'shift_notification', 'Shift coming up soon', html_map[shift_date])
+        send_html_email(agency, report_type, summary, email_list, 
+            date_utils.convert_date_to_ny(dateutil.parser.isoparse(shift['start_dt'])), 
+            NotificationCategory.SHIFT_NOTIFICATION, 'Shift coming up soon', html_map[shift_date])
 
         # Also, write the html to a file
         write_resulting_html('shift_report_{}.html'.format(shift_date_formatted), html_map[shift_date])
 
 
-def process_html_errors(agency, error_html):
+def process_html_errors(agency, report_type, error_html, shift_error_recipients):
     if error_html is not None:
-        send_html_email(agency, None, shift_error_recipients, date_utils.get_now_tz(), 'error_notification', 'Unstaffed Shifts', error_html)
-
+        send_html_email(agency, report_type, None, shift_error_recipients, date_utils.get_now_tz(), NotificationCategory.ERROR_NOTIFICATION, 'Unstaffed Shifts', error_html)
         write_resulting_html('error_list.html', error_html)
 
 def write_resulting_html(file_name, html_body):
@@ -690,10 +699,6 @@ def write_resulting_html(file_name, html_body):
         Key= '{}/{}'.format(date_utils.get_current_day_key(), file_name),
         Body=html_body
     )
-
-def read_email_addresses():
-    with open(email_address_file, 'r') as f:
-        return json.load(f)
 
 def get_email_from_db(agency, member_name):
     resp = member_table.get_item(
@@ -764,64 +769,95 @@ def get_command_arguments():
 
     return cmd_args
 
-def init_from_cmd():
+def init_from_cmd(agency):
     global s3_bucket_name
     """
     Initialize the script when invoked from the command line
     """
-    global email_address_map
-
-    # email_address_map = read_email_addresses()
-    s3_bucket_name = s3_bucket.format('martinsville')
-
+    s3_bucket_name = s3_bucket.format(agency)
     return get_command_arguments()
 
-def process(agency, start_date, end_date):
-    requireds, coverages, errors, warnings = check_events(coverage_required_calendar, coverage_offered_calendar, start_date, end_date)
+def process(start_date, end_date):
+    requireds, coverages, errors, warnings = check_events(start_date, end_date)
     print('====================================')
     print('Duty Shifts Found: {} errors: {} warnings: {}'.format(len(requireds), len(errors), len(warnings)))
     report_errors(errors)
 
     html_errors = html_formatter.format_html_report_errors(errors, start_date, 99)
-    process_html_errors(agency, html_errors)
+    process_html_errors(run_config.agency, run_config.run_trigger.report_type, html_errors, run_config.email_recipients.shift_error_receipents)
 
-    final_report_map = report_shifts(agency, coverage_required_calendar, coverage_offered_calendar, start_date, end_date, errors)
+    final_report_map = report_shifts(start_date, end_date, errors)
     html_map = html_formatter.format_html_shift_report(final_report_map)
-    process_html_results(agency, html_map, final_report_map)
+    process_html_results(run_config.agency, run_config.run_trigger.report_type, html_map, final_report_map, run_config.email_recipients.admin_email)
 
-    requireds, coverages, errors, warnings = check_events(tango_required_calendar, tango_offered_calendar, start_date, end_date)
-    print('====================================')
-    print('Tango Shifts Found: {} errors: {} warnings: {}'.format(len(requireds), len(errors), len(warnings)))
-    report_errors(errors)
-    print('====================================')
+def read_configuration(run_trigger: RunTrigger):
+    retval = dynamodb.Table(agency_configuration_table_name).query(KeyConditionExpression=Key('agency').eq(run_trigger.agency))
+    if len(retval['Items']) == 0:
+        raise Exception('No configuration found for {}'.format(run_trigger.agency))
+    
+    config_json = retval['Items'][0]
+    return run_config_from_json(run_trigger, config_json)
 
 
-
+# =====================================================================================================================
+# Entry point for Lambda
 def lambda_handler(event, context):
+    """
+    (was) {"time":"$.time"}
+    {"time": "$.time", "agency": "martinsville","report_type": "duty"}  
+    Called by EventBridge when a rule is triggered
+        {
+        "time": <time>,
+        "agency": "martinsville",
+        "report_type": "duty"
+        }    
+
+    report_type is: [duty, special]
+    """
     global s3_bucket_name
     global HEADLESS
     global email_is_live
+    global run_config
+    global email
+
+    run_trigger = RunTrigger(event['time'], event['agency'], event['report_type'])
+
+    run_config = read_configuration(run_trigger)
+    # agency_configuration = read_configuration(run_trigger)
+    # run_config = RunConfig(event['time'], event['agency'], event['report_type'], agency_configuration)
+
+    test_mode = True if 'testing' in event and event['testing'] == True else False
+    email = EmailUtil(run_config.email_account, test_mode)
 
     HEADLESS = True
     email_is_live = True
-    agency = event['agency']
 
-    s3_bucket_name = s3_bucket.format(agency)
+    s3_bucket_name = s3_bucket.format(event['agency'])
 
     start_date = datetime.datetime.now().strftime(date_utils.API_DATE_FORMAT_YMD)
     end_date = (datetime.datetime.now() + datetime.timedelta(days=5)).strftime(date_utils.API_DATE_FORMAT_YMD)
 
     try:
-        process(agency, start_date, end_date)
+        process(start_date, end_date)
     except Exception as e:
-        invocation_params = 'agency: {} start_date: {} end_date: {}'.format(agency, start_date, end_date)
+        print('WTF, I got an exception!!!!')
+        print(traceback.format_exc())
+        invocation_params = 'agency: {} start_date: {} end_date: {}'.format(event['agency'], start_date, end_date)
         exception_details = traceback.format_exc()
         email_body = 'Exception in lambda_handler: \n called with: {}\n\n{}'.format(invocation_params, exception_details)
-        email_utils.send_email(administrator_email, [], 'Exception in check_coverage lambda handler', email_body)
+        email.send_email([developer_email], [], 'Exception in check_coverage lambda handler', email_body)
         exit()
 
-if __name__ == '__main__':
-    args = init_from_cmd()
-    agency = 'martinsville'
 
-    process(agency, args.start_date, args.end_date)
+if __name__ == '__main__':
+    agency = 'martinsville'
+    run_trigger: RunTrigger = RunTrigger(datetime.datetime.now().strftime(date_utils.API_DATE_FORMAT_YMD), agency, 'duty')
+
+    run_config = read_configuration(run_trigger)
+
+    print('Here are the error recipients: {}'.format(run_config.email_recipients.shift_error_receipents))
+
+    args = init_from_cmd(agency)
+    # run_config: RunConfig = RunConfig(datetime.date.today(), args.agency, 'duty', agency_configuration)
+
+    process(args.start_date, args.end_date)

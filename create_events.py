@@ -22,63 +22,103 @@ python create_events.py --calendar_key coverage_required --source_file shifts/fe
 """
 
 import csv
+import calendar
+from datetime import datetime
+from datetime import timedelta
 import argparse
 import os
+import dateutil
+
+from anyio import create_event
 import common.teamup_utils as teamup_utils
+import common.date_utils as date_utils
 import common.utils as utils
 import sys
+from dataclasses import dataclass
+from common.config_data import RunConfig, RunTrigger, read_configuration, CoverageLevels, is_coverage_level
 
 
 url = 'https://api.teamup.com'
+days_of_week = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+run_config: RunConfig = None
 
-api_key = os.environ['TEAMUP_API_KEY']
-target_calendar_key = os.environ['COLLABORATIVE_CALENDAR_ADMIN_KEY']
-coverage_required_calendar = os.environ['COVERAGE_REQUIRED_CALENDAR']
-coverage_offered_calendar = os.environ['COVERAGE_OFFERED_CALENDAR']
-tango_required_calendar = os.environ['TANGO_REQUIRED_CALENDAR']
-tango_offered_calendar = os.environ['TANGO_OFFERED_CALENDAR']
+@dataclass
+class TeamUpConfiguration:
+    api_key : str
+    calendar_ro_key: str
+    calendar_admin_key: str
+    coverage_required_calendar: str
+    coverage_offered_calendar: str
+
+CONFIG = TeamUpConfiguration(
+    api_key=os.environ['TEAMUP_API_KEY'],
+    calendar_ro_key = os.environ['CALENDAR_RO_KEY'],
+    calendar_admin_key = os.environ['CALENDAR_ADMIN_KEY'],
+
+    coverage_required_calendar = os.environ['COVERAGE_REQUIRED_CALENDAR'],
+    coverage_offered_calendar = os.environ['COVERAGE_OFFERED_CALENDAR']
+)
 
 test_event_ids_folder = 'test_cases/event_ids'
 
 """
+-----------------------------------------------------------------------------------------------------------------------
+## Setup Python environment
+```
+source ~/Downloads/env/bin/activate
+source secrets.sh
+
+```
+-------------------------------------------------------------------------------------------------------------------------
+# Coverage Required (from collab calendar)
+## Download calendar (if creating collaborative events)
+Go to Google Docs (Collaborative Spreadsheet) - click on the tab for the month and do a "Download as CSV" 
+
+### To create events (Coverage required from Collaborative Spreadsheet): 
+
+python3 create_events.py --calendar coverage_required --spreadsheet --year 2022 --month 5 --source_file '/Users/gnowakow/Downloads/Coverage Mapping Beta Test 180 Days 2022 - May.csv'
+
+-------------------------------------------------------------------------------------------------------------------------
+# Coverage Required (from your own .csv)
 ### To create events (Coverage required): 
 python3 create_events.py --calendar coverage_required --source_file /Users/gnowakow/Projects/EMS/TeamUp/shifts/feb_2022_coverage_required.csv
 
 Expected input for coverage_required calendar: [start_dt, end_dt, title]
 Example: 2022-02-01T18:00:00,2022-02-02T06:00:00,MRS Duty: Covering 34 (Green Knoll) and 35 (Finderne)
 
-
+-------------------------------------------------------------------------------------------------------------------------
+# Coverage Offered (from your own .csv)
 ### To create events (Coverage offered):
 python3 create_events.py --calendar coverage_offered --source_file /Users/gnowakow/Projects/EMS/TeamUp/shifts/feb_2022_coverage_offered.csv
 
 Expected input for coverage_offered: [start_dt, end_dt, role, who]
 Example: 2022-02-14T18:00:00,2022-02-15T00:00:00,crew_chief,Jim Ross
 
-
+-------------------------------------------------------------------------------------------------------------------------
 ### To delete records created: 
-
-python3 create_events.py --calendar coverage_required --source_file /Users/gnowakow/Projects/EMS/TeamUp/shifts/feb_2022_coverage_required_event_ids.csv --delete_all
-
+python3 create_events.py --delete_all --calendar coverage_offered --source_file /Users/gnowakow/Downloads/CreatedCovers_0428.txt
 
 ### Query and delete events:
 python3 create_events.py --calendar coverage_required --start_date 2022-02-01 --end_date 2022-02-30 --get_event_ids
 python3 create_events.py --calendar coverage_required --source_file /Users/gnowakow/Projects/EMS/TeamUp/shifts/coverage_required_2022-03-01_2022-03-31.csv --delete_all
 
+-------------------------------------------------------------------------------------------------------------------------
 """
 
-
 def add_events(source_file, sub_calendar_key):
-    print('Going to create events in calendar: {} Sub calendar: {} using API key: {}'.format(target_calendar_key, sub_calendar_key, api_key))
+    print('Going to create events in calendar: {} Sub calendar: {} using API key: {}'.format(CONFIG.calendar_admin_key, sub_calendar_key, CONFIG.api_key))
     num_events = 0
     event_id_file = source_file.replace('.csv', '_event_ids.csv')
     with open(event_id_file, 'w') as events_file:
         with open(source_file, 'r') as f:
             rdr = csv.reader(f)
             for row in rdr:
+                if len(row) == 0:
+                    continue
                 event = row_to_event(sub_calendar_key, row)
                 print(event)
 
-                new_event = teamup_utils.create_event(event, target_calendar_key, api_key)
+                new_event = teamup_utils.create_event(event, CONFIG.calendar_admin_key, CONFIG.api_key)
                 if new_event is None:
                     print('Failed to create event: {}'.format(event))
                     sys.exit(1)
@@ -115,13 +155,9 @@ def row_to_event(sub_calendar_id, row):
 
 def translate_calendar_key(calendar_key):
     if calendar_key == 'coverage_required':
-        return coverage_required_calendar
+        return CONFIG.coverage_required_calendar
     elif calendar_key == 'coverage_offered':
-        return coverage_offered_calendar
-    elif calendar_key == 'tango_required':
-        return tango_required_calendar
-    elif calendar_key == 'tango_offered':
-        return tango_offered_calendar
+        return CONFIG.coverage_offered_calendar
     else:
         raise Exception('Invalid calendar key: {}'.format(calendar_key))
 
@@ -130,7 +166,7 @@ def delete_all_events(id_file):
     with open(id_file, 'r') as f:
         for event_id in f:
             # print('Deleting event: {} subcal: {} api-key: {}'.format(event_id, sub_calendar_key, api_key))
-            teamup_utils.delete_event(event_id.strip(), target_calendar_key, api_key)
+            teamup_utils.delete_event(event_id.strip(), CONFIG.calendar_admin_key, CONFIG.api_key)
 
 def get_command_arguments():
     # Instantiate the parser
@@ -138,8 +174,7 @@ def get_command_arguments():
 
     # Required positional argument
 
-    parser.add_argument('--calendar_key', required=True,
-        choices=['coverage_required', 'coverage_offered', 'tango_required', 'tango_offered'])
+    parser.add_argument('--calendar_key', choices=['coverage_required', 'coverage_offered', 'tango_required', 'tango_offered'])
 
     parser.add_argument('--get_event_ids', action='store_true')
     parser.add_argument('--start_date')
@@ -148,6 +183,11 @@ def get_command_arguments():
     parser.add_argument('--source_file' , help='The name of the file to read from')
 
     parser.add_argument('--delete_all', action='store_true', help='Delete all events in the calendar')
+
+    parser.add_argument('--spreadsheet', action='store_true', help='Process the events spreadsheet from Collaborative')
+    parser.add_argument('--default_coverage', action='store_true', help='Default coverages using the regulars.csv')
+    parser.add_argument('--year', help='Year to process', type=int)
+    parser.add_argument('--month', help='Month to process', type=int)
 
     # Parse the arguments
     args = parser.parse_args()
@@ -166,6 +206,10 @@ def get_command_arguments():
             print('Must specify source file containing event_ids')
             sys.exit(1)
     
+    if args.spreadsheet:
+        if args.source_file is None or args.year is None or args.month is None:
+            print('Must specify source_file, year and month when processing spreadsheet')
+            sys.exit(1)
 
     print('===============================================')
     if args.get_event_ids:
@@ -176,6 +220,8 @@ def get_command_arguments():
     else:
         print('Will read the file: {}'.format(args.source_file))
         print('And create events in: {}'.format(args.calendar_key))
+        if args.spreadsheet:
+            print('From a spreadsheet')
     print('===============================================')    
 
     if input("are you sure? (y/n) ") != "y":
@@ -195,7 +241,7 @@ def query_save_events(calendar_key, start_date, end_date):
         os.remove(filename)
 
     utils.clear_relative_path(test_event_ids_folder)
-    events = teamup_utils.get_events(start_date, end_date, target_calendar_key, translate_calendar_key(calendar_key), api_key)
+    events = teamup_utils.get_events(start_date, end_date, CONFIG.calendar_ro_key, translate_calendar_key(calendar_key), CONFIG.api_key)
 
     with open(filename, 'w') as f:
         for event in events['events']:
@@ -204,16 +250,218 @@ def query_save_events(calendar_key, start_date, end_date):
 
     print('created file: {}'.format(filename))
 
+def check_is_weekend(month, day_num, year):
+    d = datetime(year, month, day_num)
+    return d.weekday() > 4
+
+
+def create_event(event, existing_events):
+    for existing_event in existing_events['events']:
+        if date_utils.chop_dst(existing_event['start_dt']) == event['start_dt'] and date_utils.chop_dst(existing_event['end_dt']) == event['end_dt']:
+            print('Event already exists: {}'.format(existing_event['id']))
+            return
+    new_event = teamup_utils.create_event(event, CONFIG.calendar_admin_key, CONFIG.api_key)
+    if new_event is None:
+        print('Failed to create event: {}'.format(event))
+        sys.exit(1)
+    print('Created event: {} with ID: {}'.format(new_event['event']['start_dt'], new_event['event']['id']))
+
+
+def find_events_to_remove(existing_events, spreadsheet_events):
+    events_to_delete = []
+    for existing_event in existing_events['events']:
+        found = False
+        for spreadsheet_event in spreadsheet_events:
+            if date_utils.chop_dst(existing_event['start_dt']) == spreadsheet_event['start_dt'] and date_utils.chop_dst(existing_event['end_dt']) == spreadsheet_event['end_dt']:
+                found = True
+                break
+        if not found:
+            events_to_delete.append(existing_event)
+    return events_to_delete
+
+def get_period(month, year):
+    period_start_date = datetime(year, month, 1)
+    period_end_date = datetime(year, month, calendar.monthrange(year, month)[1])
+    return (period_start_date, period_end_date)
+
+def process_spreadsheet(filename, calendar_key, month, year):
+    period = get_period(month, year)
+    existing_events = teamup_utils.get_events(period[0], period[1], CONFIG.calendar_ro_key, translate_calendar_key(calendar_key), CONFIG.api_key)
+
+    days_staffed = [0] * 7
+    total_hours = 0
+
+    events_to_create = []
+
+    with open(filename, 'r') as f:
+        for i in range(4):
+            next(f)
+        reader = csv.reader(f)
+        for row in reader:
+            day = row[1]
+            crew_1 = row[2]
+            crew_2 = row[3]
+            crew_1_parts = row[2].split(' ')
+            crew_2_parts = row[3].split(' ')
+
+            if crew_1_parts[0] == '43' or crew_2_parts[0] == '43':
+                if crew_1_parts[0] == '43':
+                    title = crew_1
+                else:
+                    title = crew_2
+
+                morning_date = datetime(year, month, int(day), 6, 0, 0)
+                morning_event_start_date = morning_date.isoformat()
+                morning_event_end_date = datetime(year, month, int(day), 18, 0, 0).isoformat()
+
+                next_day = morning_date + timedelta(days=1)
+                evening_event_start_date = datetime(year, month, int(day), 18, 0, 0).isoformat()
+                evening_end_date = datetime(next_day.year, next_day.month, next_day.day , 6, 0, 0).isoformat()
+
+                days_staffed[morning_date.weekday()] += 1
+
+                events_to_create.append(row_to_event(translate_calendar_key(calendar_key), [evening_event_start_date, evening_end_date, title]))
+                total_hours += 12
+
+                # If weekend, create two events: day and night shift
+                if check_is_weekend(month, int(day), year):
+                    events_to_create.append(row_to_event(translate_calendar_key(calendar_key), [morning_event_start_date, morning_event_end_date, title]))
+
+                    # create_event(morning_event, existing_events)
+                    total_hours += 12
+
+    events_to_remove = find_events_to_remove(existing_events, events_to_create)
+
+    for event in events_to_create:
+        create_event(event, existing_events)
+
+    if len(events_to_remove) > 0:
+        print('Should remove the below events as they are not on the spreadsheet:')
+        for event_to_remove in events_to_remove:
+            print('Date: {} id: {}'.format(event_to_remove['start_dt'], event_to_remove['id']))
+    
+    print('===== Statistics =====')
+    print('Days staffed:')
+    for day in range(7):
+        print('{}: {}'.format(days_of_week[day], days_staffed[day]))
+        day += 1    
+    print('Total hours: {}'.format(total_hours))
+
+def create_cover_event(member_name, start_dt, end_dt, coverage_level):
+    # print('Teamup settings: {}'.format(run_config.teamup_config.level_mappings))
+    return {
+            'subcalendar_id': CONFIG.coverage_offered_calendar,
+            'start_dt': start_dt.isoformat(),
+            'end_dt': end_dt.isoformat(),
+            'custom': {
+                'coverage_level': run_config.teamup_config.level_mappings[coverage_level]
+            },
+            'who': member_name
+        }
+
+def get_coverage_span(required_start_date, required_end_date, offer_day_of_week, offer_start_time, offer_end_time):
+    """
+    For the given required_start_date - required_end_date, return the span of dates that fall within the required
+    coverage time.
+    """
+
+    if offer_day_of_week == required_start_date.weekday():
+        context_date = required_start_date
+    elif offer_day_of_week == required_end_date.weekday():
+        context_date = required_end_date
+    else:
+        return
+
+    # Bring the offer start, end times within the context of the required start and end dates
+    offer_span = date_utils.span_for_date(context_date, offer_start_time, offer_end_time)
+    # print('offer DOW: {} offer_span: {} - {}'.format(offer_day_of_week, offer_span[0].isoformat(), offer_span[1].isoformat()))
+
+    # If the offer span is completely outside the required span, return None
+    if offer_span[0] < required_end_date and offer_span[1] > required_start_date:
+        return max(offer_span[0], required_start_date), min(offer_span[1], required_end_date)
+
+# def adjust_teamup_date(tdate):
+    """
+    For some reason, if you save a date with anything between: 11:00 - 11:59, it will come back as: 24:00  
+    """
+    
+
+def is_duplicate_offer(member_name, coverage_hours, existing_offers):
+    for existing_offer in existing_offers['events']:
+        offer_start = coverage_hours[0].isoformat()
+        offer_end = coverage_hours[1].isoformat()
+        if existing_offer['who'] == member_name and existing_offer['start_dt'] == offer_start and existing_offer['end_dt'] == offer_end:
+            return True
+    return False
+
+def find_coverage(required_event, existing_offers, regulars):
+    """
+    For the given required_event, find all of the "regulars" that should be scheduled to cover it
+    Note: If the regular is already scheduled to cover the required_event, it will be skipped
+    """
+    covers_events = []
+    required_start_date = dateutil.parser.isoparse(required_event['start_dt'])
+    required_end_date = dateutil.parser.isoparse(required_event['end_dt'])
+
+    for regular in regulars:
+        offer_day_of_week = int(regular['day_of_week'])
+        if offer_day_of_week == required_start_date.weekday() or offer_day_of_week == required_end_date.weekday():
+            coverage_hours = get_coverage_span(required_start_date, required_end_date,  offer_day_of_week, regular['start_time'], regular['end_time'])
+            if coverage_hours and not is_duplicate_offer(regular['member'], coverage_hours, existing_offers):
+                covers_events.append(create_cover_event(regular['member'], coverage_hours[0], coverage_hours[1], regular['coverage_level']))
+    return covers_events
+
+def read_regulars():
+    regulars = []
+    with open("./shifts/regulars.csv", 'r') as file:
+        csv_file = csv.DictReader(file)
+        for row in csv_file:
+            if is_coverage_level(row['coverage_level']) == False:
+                print('Invalid Coverage Level in Regulars: {}'.format(row['coverage_level']))
+            else:
+                regulars.append(row)
+    return regulars
+
+def get_offers(regulars, month, year):
+    period = get_period(month, year)
+    required_coverage = teamup_utils.get_events(period[0], period[1], CONFIG.calendar_ro_key, CONFIG.coverage_required_calendar, CONFIG.api_key)
+    existing_offers = teamup_utils.get_raw_events(period[0], period[1], CONFIG.calendar_ro_key, CONFIG.coverage_offered_calendar, CONFIG.api_key)
+
+    coverage_events = []
+    for required_event in required_coverage['events']:
+        covers = find_coverage(required_event, existing_offers, regulars)
+        if len(covers) > 0:
+            coverage_events.extend(covers)
+
+    return coverage_events
+
+def auto_populate_coverage(month, year):
+    offer_events = get_offers(read_regulars(), month, year)
+
+    for cover in offer_events:
+        create_event(cover, {'events':[]})
+    # print('Will create: {} events'.format(len(offer_events)))
+    # for offer_event in offer_events:
+    #     print('{} Start: {} End: {} Who: {} ({})'.format(days_of_week[dateutil.parser.isoparse(offer_event['start_dt']).weekday()], offer_event['start_dt'], offer_event['end_dt'], offer_event['who'], offer_event['custom']['coverage_level']))
+
+
 if __name__ == '__main__':
+
+    agency = 'martinsville'
+    run_trigger: RunTrigger = RunTrigger(datetime.now().strftime(date_utils.API_DATE_FORMAT_YMD), agency, 'duty')
+
+    run_config = read_configuration(run_trigger)
+
     args = get_command_arguments()
 
     if args.get_event_ids:
         query_save_events(args.calendar_key, args.start_date, args.end_date)
+    elif args.delete_all:
+        delete_all_events(args.source_file)
+    elif args.spreadsheet:
+        process_spreadsheet(args.source_file, args.calendar_key, args.month, args.year)
+    elif args.default_coverage:
+        auto_populate_coverage(args.month, args.year)
     else:
-        if args.delete_all:
-            delete_all_events(args.source_file)
-        else:
-            num_events = add_events(args.source_file, translate_calendar_key(args.calendar_key))
-            print('Created {} events.  Saved event_ids in a file'.format(num_events))
-        
-
+        num_events = add_events(args.source_file, translate_calendar_key(args.calendar_key))
+        print('Created {} events.  Saved event_ids in a file'.format(num_events))

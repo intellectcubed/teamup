@@ -22,8 +22,6 @@ def build_shift_summary_table(summary) -> str:
     summary_table += '</table>'
     return summary_table
 
-
-
 # Might consider this in the future: https://ptable.readthedocs.io/en/latest/tutorial.html  (at least for debugging/printing interactively ascii tables)
 def format_html_shift_report(final_report_map):
 
@@ -48,6 +46,9 @@ def format_html_shift_report(final_report_map):
             max_members = max(max_members, len(coverage_span['who'].split(',')))
 
         shift_content = '<h2>{}</h2>'.format(utils.create_shift_name(shift))
+        if 'title' in shift:
+            shift_content = '<h2>{}</h2>'.format(shift['title'])
+
         shift_content += '<h3>Shift Times: {} - {}</h3>'.format(date_utils.date_simple_format(shift['start_dt']), date_utils.date_simple_format(shift['end_dt']))
         shift_table = '<table>'
         shift_table += '<tr><th>Start</th><th>End</th><th>Hours</th>{}</tr>'.format(''.join(['<th>Member</th>' for x in range(max_members)]))
@@ -84,7 +85,6 @@ def format_html_report_errors(shift_errors, start_date, max_days):
     col_headers = ['Start', 'End', 'Hours', 'Role Required']
     classes = ['','','cell_hour','']
 
-    print('The folowing shifts have errors:')
     shift_content = ''
     for shift_data in shift_errors:
         shift = shift_data['shift']

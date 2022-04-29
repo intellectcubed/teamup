@@ -1,61 +1,67 @@
 # Import smtplib to provide email functions
 import smtplib
-import os
 import datetime
-
+from common.config_data import EmailConfig
 
 # Import the email modules
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from_email = os.environ['FROM_EMAIL_ADDRESS']
-email_account = os.environ['EMAIL_ACCOUNT']
-email_password = os.environ['EMAIL_PASSWORD']
-smtp_server = os.environ['SMTP_SERVER']
+class EmailUtil:
 
-def send_html_email(to_emails, cc_list, subject, body):
+    def __init__(self, email_config: EmailConfig, is_test_mode=False):
+        self.email_config = email_config
+        self.is_test_mode = is_test_mode
 
-    # print('Overriding to_emails {} with {}'.format(to_emails, "gmn314@yahoo.com"))
-    # to_emails = ['gmn314@yahoo.com']
+    def send_html_email(self, to_emails, cc_list, subject, body):
+        if self.is_test_mode:
+            print('TestMode: Fake Sending email to: {}'.format(to_emails))
+            return
 
-    # Create the container (outer) email message.
-    msg = MIMEMultipart()
-    msg['Subject'] = subject
-    msg['From'] = from_email
-    msg['To'] = ', '.join(to_emails)
-    if cc_list is not None and len(cc_list) > 0:
-        msg['Cc'] = ', '.join(cc_list)
+        # print('Overriding to_emails {} with {}'.format(to_emails, "gmn314@yahoo.com"))
+        # to_emails = ['gmn314@yahoo.com']
 
-    # Assume that the message contains HTML
-    msg.attach(MIMEText(body, 'html'))
+        # Create the container (outer) email message.
+        msg = MIMEMultipart()
+        msg['Subject'] = subject
+        msg['From'] = self.email_config.from_email_address
+        msg['To'] = ', '.join(to_emails)
+        if cc_list is not None and len(cc_list) > 0:
+            msg['Cc'] = ', '.join(cc_list)
 
-    # Send the email via our own SMTP server.
-    # s = smtplib.SMTP('smtp.gmail.com', 587)
-    s = smtplib.SMTP(smtp_server, 587)
-    s.starttls()
-    s.login(email_account, email_password)
-    s.send_message(msg)
-    s.quit()
+        # Assume that the message contains HTML
+        msg.attach(MIMEText(body, 'html'))
 
-    print('{} email with subject: {} sent to: {} cc list: '.format(datetime.datetime.now(), subject, to_emails, cc_list))
+        # Send the email via our own SMTP server.
+        # s = smtplib.SMTP('smtp.gmail.com', 587)
+        s = smtplib.SMTP(self.email_config.smtp_server, 587)
+        s.starttls()
+        s.login(self.email_config.email_account, self.email_config.email_password)
+        s.send_message(msg)
+        s.quit()
 
-def send_email(to_emails, cc_list, subject, body):
+        print('{} email with subject: {} sent to: {} cc list: '.format(datetime.datetime.now(), subject, to_emails, cc_list))
 
-    # Create the container (outer) email message.
-    msg = MIMEText(body)
-    msg['Subject'] = subject
-    msg['From'] = from_email
-    msg['To'] = ', '.join(to_emails)
-    if cc_list is not None and len(cc_list) > 0:
-        msg['Cc'] = ', '.join(cc_list)
+    def send_email(self, to_emails, cc_list, subject, body):
+        if self.is_test_mode:
+            print('Test Mode: Fake Sending email to: {}'.format(to_emails))
+            return
+
+        # Create the container (outer) email message.
+        msg = MIMEText(body)
+        msg['Subject'] = subject
+        msg['From'] = self.email_config.from_email_address
+        msg['To'] = ', '.join(to_emails)
+        if cc_list is not None and len(cc_list) > 0:
+            msg['Cc'] = ', '.join(cc_list)
 
 
-    # Send the email via our own SMTP server.
-    s = smtplib.SMTP(smtp_server, 587)
-    s.starttls()
-    s.login(email_account, email_password)
-    print('Sending from{} to{} msg{}'.format(from_email, to_emails, msg.as_string()))
-    s.sendmail(from_email, to_emails, msg.as_string())
-    s.quit()
+        # Send the email via our own SMTP server.
+        s = smtplib.SMTP(self.email_config.smtp_server, 587)
+        s.starttls()
+        s.login(self.email_config.email_account, self.email_config.email_password)
+        print('Sending from{} to{} msg{}'.format(self.email_config.from_email_address, to_emails, msg.as_string()))
+        s.sendmail(self.email_config.from_email_address, to_emails, msg.as_string())
+        s.quit()
 
-    print('{} email with subject: {} sent to: {} cc list: '.format(datetime.datetime.now(), subject, to_emails, cc_list))
+        print('{} email with subject: {} sent to: {} cc list: '.format(datetime.datetime.now(), subject, to_emails, cc_list))

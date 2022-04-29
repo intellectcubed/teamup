@@ -25,6 +25,7 @@ stored in **prod.env** in the format: ```VARIABLE=VALUE```
 
 ## Sample Command line
 python check_coverage.py
+python check_coverage.py --start_date 2021-12-01 --end_date 2021-12-31 // Dont send email
 python check_coverage.py --start_date 2021-12-01 --end_date 2021-12-31 --send_email
 
 ### When running on server (headless)
@@ -41,3 +42,4 @@ coverate object.  If it finds a string in the format: ```email: email@domain```,
 * Shift infromation is sent to the member's email addresses that are in the shift.  
 * Error (unstaffed shifts) are sent to ```martinsvillers@yahoo.com```
 * If an email address is not found, and an email was not added to the ```notes:``` field, the email will be sent to just gnowakowski@gmail.com (the script owner)
+

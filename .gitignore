@@ -137,3 +137,6 @@ prod.env
 htmlcov/*
 agency_config/*
 .DS_STORE
+testing/__latest__/*
+testing/__snapshot__/*
+

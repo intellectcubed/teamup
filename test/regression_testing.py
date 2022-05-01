@@ -1,52 +1,24 @@
-import json
-import csv
-from check_coverage import check_events, report_shifts
-import common.teamup_utils as teamup_utils
+"""
+Regression test suite.
 
+If regression tests are run and they fail because the old snapshot does not match the new snapshot,
+it may be due to the fact that the test cases have changed, or might be because of a bug in the code.
+
+If the cases do not match, you can use http://www.jsondiff.com/ to compare the results to the snapshot.  If you agree with the 
+changes in the snapshot, you can delete the __snapshot__ folder and run again. -- This will save the snapshot for the next run.
+
+TODO: 
+    - Add code that removes dates and event_ids from the snapshot, that is not what should be compared between old vs new.
+    - Change the check_coverage method to also return logs of which emails were sent.  Save this in another JSON file that should also
+      be compared to the snapshot.
+    - Write a shell script that will run the regression tests before uploading to AWS.  If regression fails, do not upload!
+"""
+
+import json
+import check_coverage as CheckCoverage
+import glob
 import os
 
-url = 'https://api.teamup.com'
-api_key = os.environ['TEAMUP_API_KEY']
-
-target_calendar_key = os.environ['COLLABORATIVE_CALENDAR_ADMIN_KEY']
-coverage_required_calendar = os.environ['COVERAGE_REQUIRED_CALENDAR']
-coverage_offered_calendar = os.environ['COVERAGE_OFFERED_CALENDAR']
-
-agency = 'test_agency'
-
-def create_test_cases(filename, subcalendar_id):
-    events = []
-    with open(filename, 'r') as f:
-        rdr = csv.reader(f)
-        # This skips the header
-        next(rdr)
-        for row in rdr:
-            event = create_event(row, subcalendar_id)
-            events.append(teamup_utils.create_event(event, target_calendar_key, api_key))
-
-    return events
-
-
-def create_event(row, subcalendar_id):
-
-    if subcalendar_id == coverage_offered_calendar:
-        return {
-            'subcalendar_id': subcalendar_id,
-            'start_dt': row[0],
-            'end_dt': row[1],
-            'who': row[2],
-            'title': row[4],
-            'custom': {
-                'coverage_level': row[3]
-            }
-        }
-    elif subcalendar_id == coverage_required_calendar:
-        return {
-            'subcalendar_id': coverage_required_calendar,
-            'start_dt': row[0],
-            'end_dt': row[1],
-            'title': row[2]
-        }
 
 def save_snapshot(to_save, target_file_path):
     with open(target_file_path, 'w') as f:
@@ -67,14 +39,20 @@ def load_snapshot_compare(to_compare, target_file_path):
 
 
 def validate_results(errors, shifts) -> bool:
-
     current_dir = os.getcwd()
 
     snap_folder = '{}/testing/__snapshot__/'.format(current_dir)
-
     latest_run = '{}/testing/__latest__'.format(current_dir)
+
     if os.path.isdir(latest_run):
-        os.rmdir(latest_run)
+        files = glob.glob('{}/*'.format(latest_run))
+        for f in files:
+            os.remove(f)        
+    else:
+        os.makedirs(latest_run)
+
+    save_snapshot(shifts, '{}/shifts.json'.format(latest_run))
+    save_snapshot(errors, '{}/errors.json'.format(latest_run))
 
     if os.path.isdir(snap_folder) == False:
         os.makedirs(snap_folder)
@@ -83,52 +61,30 @@ def validate_results(errors, shifts) -> bool:
         print('Test results saved -- not validated')
         return True
     else:
-        os.makedirs(latest_run)
-        if load_snapshot_compare(errors, '{}errors.json'.format(snap_folder)) == False:
-            print('Errors snapshot does not match')
-            save_snapshot(errors, '{}errors.json'.format(latest_run))
-            return False
-        else:
-            print('PASS - Errors snapshot matches')
-
+        passed = True
         if load_snapshot_compare(shifts, '{}shifts.json'.format(snap_folder)) == False:
-            print('shifts snapshot does not match')
-            save_snapshot(shifts, '{}shifts.json'.format(latest_run))
-            return False
-        else:
+            print('** Shifts did not match snapshot **')
+            passed = False
+        if load_snapshot_compare(errors, '{}errors.json'.format(snap_folder)) == False:
+            print('** Shifts did not match snapshot **')
+            passed = False
+
+        if passed == True:
             print('PASS - shifts snapshot matches')
 
-    return True
+        return passed
 
 
-def refresh_test_cases(start_date, end_date):
-    # TODO: Get the start and end dates from the test case files
-    delete_all(start_date, end_date)
-    test_ids = create_test_cases('./test_cases/coverage_required_cases.csv', coverage_required_calendar)
-    test_ids.extend(create_test_cases('./test_cases/coverage_offered_cases.csv', coverage_offered_calendar));
-    print('Test cases created {}'.format(test_ids))
+def run_check_events(start_date, end_date):  
+    with open('./triggers/squadsentry_trigger.json') as f:
+        event = json.load(f)
 
-
-def run_test_suite(start_date, end_date):
-    requireds, coverages, errors, warnings = check_events(coverage_required_calendar, coverage_offered_calendar, start_date, end_date)
-    shift_map = report_shifts(agency, coverage_required_calendar, coverage_offered_calendar, start_date, end_date, errors)
-
-    if validate_results(errors, shift_map) == False:
+    if validate_results(*CheckCoverage.regression(event, start_date, end_date)) == False:
         print('Test cases failed!!!.  If you validate that test results are correct, delete the __snapshot__ folder and run again.')
         print('You may use: http://www.jsondiff.com/ to compare the results to the snapshot')
         return
 
-    # teamup_utils.delete_all_events(test_ids, target_calendar_key, api_key)
 
-
-def delete_all(start_date, end_date):
-    events = teamup_utils.get_events(start_date, end_date, target_calendar_key, api_key)
-    teamup_utils.delete_all_events(events, target_calendar_key, api_key)
-    print('Killed em all!!')
-
-
+# python -m test.regression_testing
 if __name__ == '__main__':
-    # refresh_test_cases('2021-12-01', '2021-12-31')
-    run_test_suite('2021-12-01', '2021-12-31')
-
-
+    run_check_events('2021-12-01', '2021-12-31')

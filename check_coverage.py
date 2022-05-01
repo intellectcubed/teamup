@@ -836,6 +836,25 @@ def lambda_handler(event, context):
         email.send_email([developer_email], [], 'Exception in check_coverage lambda handler', email_body)
         exit()
 
+
+# =====================================================================================================================
+# Entry point for Regression Testing
+def regression(event, start_date, end_date):
+    global run_config
+    global email
+
+    run_config = read_configuration(RunTrigger(event['time'], event['agency'], event['report_type']))
+
+    test_mode = True if 'testing' in event and event['testing'] == True else False
+    email = EmailUtil(run_config.email_account, test_mode) #TODO: This should be a test email object that returns email info in JSON format
+
+    print('Regression testing for dates: {} to {}'.format(start_date, end_date))
+    requireds, coverages, errors, warnings = check_events(start_date, end_date)
+    shift_map = report_shifts(start_date, end_date, errors)
+
+    return errors, shift_map
+
+
 ## Should not run from command line, but should use 
 # python-lambda-local -f lambda_handler check_coverage.py ./triggers/martinsville_trigger.json
 # python-lambda-local -f lambda_handler check_coverage.py ./triggers/squadsentry_trigger.json

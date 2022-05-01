@@ -34,30 +34,12 @@ import common.teamup_utils as teamup_utils
 import common.date_utils as date_utils
 import common.utils as utils
 import sys
-from dataclasses import dataclass
-from common.config_data import RunConfig, RunTrigger, read_configuration, CoverageLevels, is_coverage_level
+from common.config_data import CoverageLevels, EventCalendarsKeys, RunConfig, read_configuration, is_coverage_level, read_trigger
 
 
 url = 'https://api.teamup.com'
 days_of_week = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 run_config: RunConfig = None
-
-@dataclass
-class TeamUpConfiguration:
-    api_key : str
-    calendar_ro_key: str
-    calendar_admin_key: str
-    coverage_required_calendar: str
-    coverage_offered_calendar: str
-
-CONFIG = TeamUpConfiguration(
-    api_key=os.environ['TEAMUP_API_KEY'],
-    calendar_ro_key = os.environ['CALENDAR_RO_KEY'],
-    calendar_admin_key = os.environ['CALENDAR_ADMIN_KEY'],
-
-    coverage_required_calendar = os.environ['COVERAGE_REQUIRED_CALENDAR'],
-    coverage_offered_calendar = os.environ['COVERAGE_OFFERED_CALENDAR']
-)
 
 test_event_ids_folder = 'test_cases/event_ids'
 
@@ -106,7 +88,7 @@ python3 create_events.py --calendar coverage_required --source_file /Users/gnowa
 """
 
 def add_events(source_file, sub_calendar_key):
-    print('Going to create events in calendar: {} Sub calendar: {} using API key: {}'.format(CONFIG.calendar_admin_key, sub_calendar_key, CONFIG.api_key))
+    print('Going to create events in calendar: {} Sub calendar: {} using API key: {}'.format(run_config.calendar_admin_key, sub_calendar_key, run_config.api_key))
     num_events = 0
     event_id_file = source_file.replace('.csv', '_event_ids.csv')
     with open(event_id_file, 'w') as events_file:
@@ -118,7 +100,7 @@ def add_events(source_file, sub_calendar_key):
                 event = row_to_event(sub_calendar_key, row)
                 print(event)
 
-                new_event = teamup_utils.create_event(event, CONFIG.calendar_admin_key, CONFIG.api_key)
+                new_event = teamup_utils.create_event(event, run_config.calendar_admin_key, run_config.api_key)
                 if new_event is None:
                     print('Failed to create event: {}'.format(event))
                     sys.exit(1)
@@ -153,83 +135,110 @@ def row_to_event(sub_calendar_id, row):
     else:
         raise Exception('Invalid sub calendar id: {}'.format(sub_calendar_id))
 
+def row_to_event2(sub_calendar, row):
+    if 'coverage_level' in row:
+        coverage_level = run_config.teamup_config.level_mappings[row['coverage_level']]
+    else:
+        coverage_level = run_config.teamup_config.level_mappings[CoverageLevels.DO_NOT_SELECT.value]
+
+    msg = {
+        'subcalendar_id': translate_calendar_key(sub_calendar),
+        'start_dt': row['start_dt'],
+        'end_dt': row['end_dt'],
+        'custom': {
+            'coverage_level': coverage_level
+        }
+    }
+
+    if 'title' in row:
+        msg['title'] = row['title']
+    if 'who' in row:
+        msg['who'] = row['who']
+    return msg
+
+
 def translate_calendar_key(calendar_key):
-    if calendar_key == 'coverage_required':
-        return CONFIG.coverage_required_calendar
-    elif calendar_key == 'coverage_offered':
-        return CONFIG.coverage_offered_calendar
+    if calendar_key == EventCalendarsKeys.REQUIRED:
+        return run_config.teamup_config.coverage_required_calendar
+    elif calendar_key == EventCalendarsKeys.OFFERED:
+        return run_config.teamup_config.coverage_offered_calendar
     else:
         raise Exception('Invalid calendar key: {}'.format(calendar_key))
+
+def create_test_cases(coverage_required_file, coverage_offered_file):
+    print('Setting up test calendar')
+
+    scenarios_start_date = datetime.max
+    scenarios_end_date = datetime.min
+
+    coverage_required_events = []
+    with open(coverage_required_file, 'r') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            if len(row) > 0:
+                event = row_to_event2(EventCalendarsKeys.REQUIRED, row)
+                scenarios_start_date = min(scenarios_start_date, dateutil.parser.isoparse(event['start_dt']))
+                scenarios_end_date = max(scenarios_end_date, dateutil.parser.isoparse(event['end_dt']))
+                coverage_required_events.append(event)
+
+    coverage_offered_events = []
+    with open(coverage_offered_file, 'r') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            if len(row) > 0:
+                event = row_to_event2(EventCalendarsKeys.OFFERED, row)
+                scenarios_start_date = min(scenarios_start_date, dateutil.parser.isoparse(event['start_dt']))
+                scenarios_end_date = max(scenarios_end_date, dateutil.parser.isoparse(event['end_dt']))
+                coverage_offered_events.append(event)
+
+    print('Scenarios start date: {} endDate: {}'.format(scenarios_start_date, scenarios_end_date))
+    existing_required_events = teamup_utils.get_events(scenarios_start_date, scenarios_end_date, run_config.teamup_config.all_calendar_key_ro, translate_calendar_key(EventCalendarsKeys.REQUIRED), run_config.teamup_config.teamup_api_key)
+    existing_offered_events = teamup_utils.get_events(scenarios_start_date, scenarios_end_date, run_config.teamup_config.all_calendar_key_ro, translate_calendar_key(EventCalendarsKeys.OFFERED), run_config.teamup_config.teamup_api_key)
+
+    print('========================================================================================================================')
+    print('You are about to operate on the date range: {} - {}'.format(scenarios_start_date, scenarios_end_date))
+    print('For the agency: {}'.format(run_config.agency))
+    print('You will delete the following events:')
+    print('\tRequired events: {}'.format(len(existing_required_events['events'])))
+    print('\tOffered events: {}'.format(len(existing_offered_events['events'])))
+    print('You will create: {} required events'.format(len(coverage_required_events)))
+    print('You will create: {} offered events'.format(len(coverage_offered_events)))
+    print('========================================================================================================================')
+    print('are you sure? (y/n)')
+    answer = input()
+    if answer.lower()!= 'y':
+        print('Aborting')
+        sys.exit(1)
+
+    print('== Deleting existing events ==')
+    for event in existing_required_events['events']:
+        teamup_utils.delete_event(event['id'], run_config.teamup_config.required_calendar_key_admin, run_config.teamup_config.teamup_api_key)
+    for event in existing_offered_events['events']:
+        teamup_utils.delete_event(event['id'], run_config.teamup_config.offered_calendar_key_admin, run_config.teamup_config.teamup_api_key)
+
+    print('== Creating new events ==')
+    for event in coverage_required_events:
+        new_event = teamup_utils.create_event(event, run_config.teamup_config.required_calendar_key_admin, run_config.teamup_config.teamup_api_key)
+        print('Created required event: {} with ID: {}'.format(new_event['event']['start_dt'], new_event['event']['id']))
+
+    for event in coverage_offered_events:
+        new_event = teamup_utils.create_event(event, run_config.teamup_config.offered_calendar_key_admin, run_config.teamup_config.teamup_api_key)
+        print('Created offered event: {} with ID: {}'.format(new_event['event']['start_dt'], new_event['event']['id']))
 
 
 def delete_all_events(id_file):
     with open(id_file, 'r') as f:
         for event_id in f:
             # print('Deleting event: {} subcal: {} api-key: {}'.format(event_id, sub_calendar_key, api_key))
-            teamup_utils.delete_event(event_id.strip(), CONFIG.calendar_admin_key, CONFIG.api_key)
+            teamup_utils.delete_event(event_id.strip(), run_config.calendar_admin_key, run_config.api_key)
 
-def get_command_arguments():
-    # Instantiate the parser
-    parser = argparse.ArgumentParser(description='Optional app description')        
-
-    # Required positional argument
-
-    parser.add_argument('--calendar_key', choices=['coverage_required', 'coverage_offered', 'tango_required', 'tango_offered'])
-
-    parser.add_argument('--get_event_ids', action='store_true')
-    parser.add_argument('--start_date')
-    parser.add_argument('--end_date')
-
-    parser.add_argument('--source_file' , help='The name of the file to read from')
-
-    parser.add_argument('--delete_all', action='store_true', help='Delete all events in the calendar')
-
-    parser.add_argument('--spreadsheet', action='store_true', help='Process the events spreadsheet from Collaborative')
-    parser.add_argument('--default_coverage', action='store_true', help='Default coverages using the regulars.csv')
-    parser.add_argument('--year', help='Year to process', type=int)
-    parser.add_argument('--month', help='Month to process', type=int)
-
-    # Parse the arguments
-    args = parser.parse_args()
-
-    # Validate that what was passed in is valid
-    if args.get_event_ids:
-        if args.start_date is None or args.end_date is None:
-            print('Must specify start and end dates when getting event ids')
-            sys.exit(1)
-        if args.calendar_key is None:
-            print('Must specify calendar key when getting event ids')
-            sys.exit(1)
-
-    if args.delete_all:
-        if args.source_file is None:
-            print('Must specify source file containing event_ids')
-            sys.exit(1)
-    
-    if args.spreadsheet:
-        if args.source_file is None or args.year is None or args.month is None:
-            print('Must specify source_file, year and month when processing spreadsheet')
-            sys.exit(1)
-
-    print('===============================================')
-    if args.get_event_ids:
-        print('Getting event ids from calendar: {}'.format(args.calendar_key))
-        print('From start date: {} to end date: {}'.format(args.start_date, args.end_date))
-    elif args.delete_all:
-        print('Will delete all ids in the file: {}'.format(args.source_file))
-    else:
-        print('Will read the file: {}'.format(args.source_file))
-        print('And create events in: {}'.format(args.calendar_key))
-        if args.spreadsheet:
-            print('From a spreadsheet')
-    print('===============================================')    
-
-    if input("are you sure? (y/n) ") != "y":
-        exit()
-
-    return args 
 
 def query_save_events(calendar_key, start_date, end_date):
+    """
+    Query TeamUp for events in the given date range and save them to a file
+    Saves to file named: <calendar_key>_<start_date>_<end_date>.txt
+    Example: coverage_required_2022-02-01_2022-02-30.txt
+    """
     if start_date > '2021-12-31':
         if input('Start date is greater than 2021-12-31, are you sure? (y/n) ') != 'y':
             exit()  
@@ -241,7 +250,7 @@ def query_save_events(calendar_key, start_date, end_date):
         os.remove(filename)
 
     utils.clear_relative_path(test_event_ids_folder)
-    events = teamup_utils.get_events(start_date, end_date, CONFIG.calendar_ro_key, translate_calendar_key(calendar_key), CONFIG.api_key)
+    events = teamup_utils.get_events(start_date, end_date, run_config.calendar_ro_key, translate_calendar_key(calendar_key), run_config.api_key)
 
     with open(filename, 'w') as f:
         for event in events['events']:
@@ -260,7 +269,7 @@ def create_event(event, existing_events):
         if date_utils.chop_dst(existing_event['start_dt']) == event['start_dt'] and date_utils.chop_dst(existing_event['end_dt']) == event['end_dt']:
             print('Event already exists: {}'.format(existing_event['id']))
             return
-    new_event = teamup_utils.create_event(event, CONFIG.calendar_admin_key, CONFIG.api_key)
+    new_event = teamup_utils.create_event(event, run_config.calendar_admin_key, run_config.api_key)
     if new_event is None:
         print('Failed to create event: {}'.format(event))
         sys.exit(1)
@@ -286,7 +295,7 @@ def get_period(month, year):
 
 def process_spreadsheet(filename, calendar_key, month, year):
     period = get_period(month, year)
-    existing_events = teamup_utils.get_events(period[0], period[1], CONFIG.calendar_ro_key, translate_calendar_key(calendar_key), CONFIG.api_key)
+    existing_events = teamup_utils.get_events(period[0], period[1], run_config.calendar_ro_key, translate_calendar_key(calendar_key), run_config.api_key)
 
     days_staffed = [0] * 7
     total_hours = 0
@@ -350,7 +359,7 @@ def process_spreadsheet(filename, calendar_key, month, year):
 def create_cover_event(member_name, start_dt, end_dt, coverage_level):
     # print('Teamup settings: {}'.format(run_config.teamup_config.level_mappings))
     return {
-            'subcalendar_id': CONFIG.coverage_offered_calendar,
+            'subcalendar_id': run_config.coverage_offered_calendar,
             'start_dt': start_dt.isoformat(),
             'end_dt': end_dt.isoformat(),
             'custom': {
@@ -380,11 +389,6 @@ def get_coverage_span(required_start_date, required_end_date, offer_day_of_week,
     if offer_span[0] < required_end_date and offer_span[1] > required_start_date:
         return max(offer_span[0], required_start_date), min(offer_span[1], required_end_date)
 
-# def adjust_teamup_date(tdate):
-    """
-    For some reason, if you save a date with anything between: 11:00 - 11:59, it will come back as: 24:00  
-    """
-    
 
 def is_duplicate_offer(member_name, coverage_hours, existing_offers):
     for existing_offer in existing_offers['events']:
@@ -424,8 +428,8 @@ def read_regulars():
 
 def get_offers(regulars, month, year):
     period = get_period(month, year)
-    required_coverage = teamup_utils.get_events(period[0], period[1], CONFIG.calendar_ro_key, CONFIG.coverage_required_calendar, CONFIG.api_key)
-    existing_offers = teamup_utils.get_raw_events(period[0], period[1], CONFIG.calendar_ro_key, CONFIG.coverage_offered_calendar, CONFIG.api_key)
+    required_coverage = teamup_utils.get_events(period[0], period[1], run_config.calendar_ro_key, run_config.coverage_required_calendar, run_config.api_key)
+    existing_offers = teamup_utils.get_raw_events(period[0], period[1], run_config.calendar_ro_key, run_config.coverage_offered_calendar, run_config.api_key)
 
     coverage_events = []
     for required_event in required_coverage['events']:
@@ -444,17 +448,99 @@ def auto_populate_coverage(month, year):
     # for offer_event in offer_events:
     #     print('{} Start: {} End: {} Who: {} ({})'.format(days_of_week[dateutil.parser.isoparse(offer_event['start_dt']).weekday()], offer_event['start_dt'], offer_event['end_dt'], offer_event['who'], offer_event['custom']['coverage_level']))
 
+def get_command_arguments():
+    global run_config
 
+    # Instantiate the parser
+    parser = argparse.ArgumentParser(description='Optional app description')        
+
+    # Required positional argument
+    parser.add_argument('--trigger_file', type=str, required=True, help='trigger filename.  Default: ./triggers/squadsentry_trigger.json', default='./triggers/squadsentry_trigger.json')
+    parser.add_argument('--calendar_key', choices=['coverage_required', 'coverage_offered'])
+
+    # Operations
+    parser.add_argument('--get_event_ids', action='store_true')
+    parser.add_argument('--delete_all', action='store_true', help='Delete all events in the calendar')
+    parser.add_argument('--spreadsheet', action='store_true', help='Process the events spreadsheet from Collaborative')
+    parser.add_argument('--default_coverage', action='store_true', help='Default coverages using the regulars.csv')
+    parser.add_argument('--sync_test_events', action='store_true', help='Sync test events')
+
+    # Optional arguments
+    parser.add_argument('--start_date')
+    parser.add_argument('--end_date')
+    parser.add_argument('--year', help='Year to process', type=int)
+    parser.add_argument('--month', help='Month to process', type=int)
+    parser.add_argument('--source_file' , help='The name of the file to read from')
+    parser.add_argument('--required_events_file', help='The name of the file to read from')
+    parser.add_argument('--offered_events_file', help='The name of the file to read from')
+
+
+    # Parse the arguments
+    args = parser.parse_args()
+
+    # Validate that what was passed in is valid
+    if args.get_event_ids:
+        if args.start_date is None or args.end_date is None:
+            print('Must specify start and end dates when getting event ids')
+            sys.exit(1)
+        if args.calendar_key is None:
+            print('Must specify calendar key when getting event ids')
+            sys.exit(1)
+
+    if args.delete_all:
+        if args.source_file is None:
+            print('Must specify source file containing event_ids')
+            sys.exit(1)
+    
+    if args.spreadsheet:
+        if args.source_file is None or args.year is None or args.month is None:
+            print('Must specify source_file, year and month when processing spreadsheet')
+            sys.exit(1)
+
+    if args.default_coverage:
+        if args.year is None or args.month is None:
+            print('Must specify year and month when processing default coverage')
+            sys.exit(1)
+
+    if args.sync_test_events:
+        if args.required_events_file is None or args.offered_events_file is None:
+            print('Must specify required_events_file and offered_events_file when syncing test events')
+            sys.exit(1)
+
+    run_config = read_configuration(read_trigger(args.trigger_file))
+
+
+    print('===============================================')
+    print('Running with the following configuration for agency: {}'.format(run_config.agency))
+    if args.sync_test_events:
+        print('Syncing test events')
+    elif args.get_event_ids:
+        print('Getting event ids from calendar: {}'.format(args.calendar_key))
+        print('From start date: {} to end date: {}'.format(args.start_date, args.end_date))
+    elif args.delete_all:
+        print('Will delete all ids in the file: {}'.format(args.source_file))
+    else:
+        print('Will read the file: {}'.format(args.source_file))
+        print('And create events in: {}'.format(args.calendar_key))
+        if args.spreadsheet:
+            print('From a spreadsheet')
+    print('===============================================')    
+
+    if input("are you sure? (y/n) ") != "y":
+        exit()
+
+    return args 
+
+
+# python create_events.py --trigger_file './triggers/squadsentry_trigger.json'
+# python create_events.py --trigger_file './triggers/squadsentry_trigger.json' --sync_test_events --required_events_file './testing/test_cases/coverage_required_cases.csv' --offered_events_file './testing/test_cases/coverage_offered_cases.csv'
 if __name__ == '__main__':
-
-    agency = 'martinsville'
-    run_trigger: RunTrigger = RunTrigger(datetime.now().strftime(date_utils.API_DATE_FORMAT_YMD), agency, 'duty')
-
-    run_config = read_configuration(run_trigger)
 
     args = get_command_arguments()
 
-    if args.get_event_ids:
+    if args.sync_test_events:
+        create_test_cases(args.required_events_file, args.offered_events_file)
+    elif args.get_event_ids:
         query_save_events(args.calendar_key, args.start_date, args.end_date)
     elif args.delete_all:
         delete_all_events(args.source_file)

@@ -18,12 +18,12 @@ import common.utils as utils
 import common.html_formatter as html_formatter
 import re
 import traceback
-import boto3
-from boto3.dynamodb.conditions import Key
 from collections import namedtuple
 import common.teamup_utils as teamup_utils
-from common.config_data import RunConfig, RunTrigger, run_config_from_json, CoverageLevels
+from common.config_data import RunConfig, RunTrigger, read_configuration, CoverageLevels
 from common.utils import NotificationCategory
+import boto3
+from boto3.dynamodb.conditions import Key
 
 
 # from dataclasses import dataclass
@@ -100,7 +100,7 @@ BRIEF_COVERAGE_DESCR_MAP = {
 
 def get_coverage_required(start_dt, end_dt):
     return teamup_utils.get_events(start_dt, end_dt, 
-        run_config.teamup_config.collaborative_calendar_key_ro,
+        run_config.teamup_config.all_calendar_key_ro,
         run_config.teamup_config.coverage_required_calendar,
         run_config.teamup_config.teamup_api_key);
 
@@ -114,7 +114,7 @@ def get_coverage_offered(start_dt, end_dt):
     """
     coverage_offered = {} # Key: date + hour, value: list of events
     coverages = teamup_utils.get_events(start_dt, end_dt, 
-        run_config.teamup_config.collaborative_calendar_key_ro,
+        run_config.teamup_config.all_calendar_key_ro,
         run_config.teamup_config.coverage_offered_calendar,
         run_config.teamup_config.teamup_api_key)
 
@@ -423,13 +423,13 @@ def report_shifts(search_start, search_end, errors):
     """
     debug_ts = int(time.time())
 
-    shifts = teamup_utils.get_events(search_start, search_end, run_config.teamup_config.collaborative_calendar_key_ro, 
+    shifts = teamup_utils.get_events(search_start, search_end, run_config.teamup_config.all_calendar_key_ro, 
         run_config.teamup_config.coverage_required_calendar, run_config.teamup_config.teamup_api_key)
 
     coverage_start = date_utils.parse_date_add_hours(search_start, -24, date_utils.API_DATE_FORMAT_YMD)
     coverage_end = date_utils.parse_date_add_hours(search_end, 24, date_utils.API_DATE_FORMAT_YMD)
 
-    coverages = teamup_utils.get_events(coverage_start, coverage_end, run_config.teamup_config.collaborative_calendar_key_ro, 
+    coverages = teamup_utils.get_events(coverage_start, coverage_end, run_config.teamup_config.all_calendar_key_ro, 
         run_config.teamup_config.coverage_offered_calendar, run_config.teamup_config.teamup_api_key)
     shift_map = events_to_map(filter_shifts_before_today(search_start, shifts['events']))
     shift_keys = sorted(shift_map.keys())
@@ -790,14 +790,6 @@ def process(start_date, end_date):
     html_map = html_formatter.format_html_shift_report(final_report_map)
     process_html_results(run_config.agency, run_config.run_trigger.report_type, html_map, final_report_map, run_config.email_recipients.admin_email)
 
-def read_configuration(run_trigger: RunTrigger):
-    retval = dynamodb.Table(agency_configuration_table_name).query(KeyConditionExpression=Key('agency').eq(run_trigger.agency))
-    if len(retval['Items']) == 0:
-        raise Exception('No configuration found for {}'.format(run_trigger.agency))
-    
-    config_json = retval['Items'][0]
-    return run_config_from_json(run_trigger, config_json)
-
 
 # =====================================================================================================================
 # Entry point for Lambda
@@ -820,11 +812,7 @@ def lambda_handler(event, context):
     global run_config
     global email
 
-    run_trigger = RunTrigger(event['time'], event['agency'], event['report_type'])
-
-    run_config = read_configuration(run_trigger)
-    # agency_configuration = read_configuration(run_trigger)
-    # run_config = RunConfig(event['time'], event['agency'], event['report_type'], agency_configuration)
+    run_config = read_configuration(RunTrigger(event['time'], event['agency'], event['report_type']))
 
     test_mode = True if 'testing' in event and event['testing'] == True else False
     email = EmailUtil(run_config.email_account, test_mode)
@@ -835,7 +823,7 @@ def lambda_handler(event, context):
     s3_bucket_name = s3_bucket.format(event['agency'])
 
     start_date = datetime.datetime.now().strftime(date_utils.API_DATE_FORMAT_YMD)
-    end_date = (datetime.datetime.now() + datetime.timedelta(days=5)).strftime(date_utils.API_DATE_FORMAT_YMD)
+    end_date = (datetime.datetime.now() + datetime.timedelta(days=run_config.agency_settings.check_errors_within_days)).strftime(date_utils.API_DATE_FORMAT_YMD)
 
     try:
         process(start_date, end_date)
@@ -848,16 +836,19 @@ def lambda_handler(event, context):
         email.send_email([developer_email], [], 'Exception in check_coverage lambda handler', email_body)
         exit()
 
+## Should not run from command line, but should use 
+# python-lambda-local -f lambda_handler check_coverage.py ./triggers/martinsville_trigger.json
+# python-lambda-local -f lambda_handler check_coverage.py ./triggers/squadsentry_trigger.json
 
-if __name__ == '__main__':
-    agency = 'martinsville'
-    run_trigger: RunTrigger = RunTrigger(datetime.datetime.now().strftime(date_utils.API_DATE_FORMAT_YMD), agency, 'duty')
+# if __name__ == '__main__':
+#     agency = 'martinsville'
+#     run_trigger: RunTrigger = RunTrigger(datetime.datetime.now().strftime(date_utils.API_DATE_FORMAT_YMD), agency, 'duty')
 
-    run_config = read_configuration(run_trigger)
+#     run_config = read_configuration(run_trigger)
 
-    print('Here are the error recipients: {}'.format(run_config.email_recipients.shift_error_receipents))
+#     print('Here are the error recipients: {}'.format(run_config.email_recipients.shift_error_receipents))
 
-    args = init_from_cmd(agency)
-    # run_config: RunConfig = RunConfig(datetime.date.today(), args.agency, 'duty', agency_configuration)
+#     args = init_from_cmd(agency)
+#     # run_config: RunConfig = RunConfig(datetime.date.today(), args.agency, 'duty', agency_configuration)
 
-    process(args.start_date, args.end_date)
+#     process(args.start_date, args.end_date)

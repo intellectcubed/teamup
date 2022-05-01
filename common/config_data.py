@@ -3,6 +3,8 @@ import os
 import boto3
 from boto3.dynamodb.conditions import Key
 from enum import Enum
+import json
+import datetime
 
 dynamodb = boto3.resource('dynamodb')
 agency_configuration_table_name = os.environ.get("AGENCY_CONFIGURATION_TABLE_NAME", "agency_configuration")
@@ -17,9 +19,9 @@ class RunTrigger:
 @dataclass
 class TeamupConfig:
     teamup_api_key: str
-    calendar_key_admin: str
-    collaborative_calendar_key_ro: str
-    collaborative_calendar_admin_key: str
+    required_calendar_key_admin: str # Administers the required calendar
+    all_calendar_key_ro: str # Has read only access to all calendars
+    offered_calendar_key_admin: str # Administers the offered calendar
     coverage_required_calendar: str
     coverage_offered_calendar: str
     level_mappings: dict
@@ -39,6 +41,7 @@ class EmailRecipients:
 @dataclass
 class AgencyConfig:
     notify_shift_within_days: int
+    check_errors_within_days: int = 5
 
 @dataclass
 class Settings:
@@ -66,6 +69,11 @@ class CoverageLevels(Enum):
     EMT_UNDER_18 = 'EMT (under 18)'
     ASSISTANT = 'Assistant'
     DRIVER = 'Driver'
+    DO_NOT_SELECT = 'Coverage Required DO NOT SELECT'
+
+class EventCalendarsKeys(Enum):
+    REQUIRED = 'coverage_required'
+    OFFERED = 'coverage_offered'
 
 # Check if coverage level is correct
 def is_coverage_level(obj):
@@ -91,9 +99,9 @@ def email_config_from_json(config_j):
 def teamup_config_from_json(config_j):
     return TeamupConfig(
             config_j['teamup_api_key'],
-            config_j['calendar_key_admin'],
-            config_j['collaborative_calendar_key_ro'],
-            config_j['collaborative_calendar_admin_key'],
+            config_j['required_calendar_key_admin'],
+            config_j['all_calendar_key_ro'],
+            config_j['offered_calendar_key_admin'],
             config_j['coverage_required_calendar'],
             config_j['coverage_offered_calendar'],
             config_j['level_mappings']);
@@ -121,3 +129,9 @@ def read_configuration(run_trigger: RunTrigger):
     config_json = retval['Items'][0]
     return run_config_from_json(run_trigger, config_json)
 
+def read_trigger(filename) -> RunTrigger:
+    trigger_json = None
+    with open(filename) as f:
+        trigger_json = json.load(f)
+
+    return RunTrigger(datetime.datetime.now().isoformat(), trigger_json['agency'], trigger_json['report_type'])

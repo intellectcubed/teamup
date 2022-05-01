@@ -44,7 +44,7 @@ class EmailUtil:
 
     def send_email(self, to_emails, cc_list, subject, body):
         if self.is_test_mode:
-            print('Test Mode: Fake Sending email to: {}'.format(to_emails))
+            print('Test Mode: Fake Sending email to: {} Subject: {}, Body: {}'.format(to_emails, subject, body))
             return
 
         # Create the container (outer) email message.

@@ -624,7 +624,7 @@ def should_send_email(agency, report_type, coverage, email_recepients, category,
     # For shift notifications, we want to constrain to sending only if the shift_start is within NOTIFY_SHIFT_WITHIN_DAYS days
     # Error notifications are sent regardless of how many days away the shift_start is
     if category == NotificationCategory.SHIFT_NOTIFICATION:
-        if date_utils.get_days_diff(date_utils.key_to_date(context_date_str),  datetime.datetime.today()) > run_config.agency_settings.notify_shift_within_days:
+        if date_utils.get_days_diff(datetime.datetime.today(), date_utils.key_to_date(context_date_str)) > run_config.agency_settings.notify_shift_within_days:
             return False
 
     # If not HEADLESS, prompt will override whether it was already sent!
@@ -677,7 +677,7 @@ def process_html_results(agency, report_type, html_map, final_report_map, admin_
         email_list, no_email_found = build_email_list(summary)
         if len(no_email_found) > 0:
             email_body = 'Problem while sending email for shift {}.  No email address found for the following members: {}'.format(shift_date, no_email_found)
-            email.send_email(admin_email_address, [], 'TeamUp Script could not find email addresses for members listed', email_body)
+            email.send_email([admin_email_address], [], 'TeamUp Script could not find email addresses for members listed', email_body)
             continue
 
         send_html_email(agency, report_type, summary, email_list, 

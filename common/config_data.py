@@ -9,6 +9,14 @@ import datetime
 dynamodb = boto3.resource('dynamodb')
 agency_configuration_table_name = os.environ.get("AGENCY_CONFIGURATION_TABLE_NAME", "agency_configuration")
 
+agency_map = {
+    'green knoll': '34',
+    'finderne': '35',
+    'manville': '42',
+    'martinsville': '43',
+    'somerville': '54',
+    'bradley gardens': '39'
+}
 
 @dataclass
 class RunTrigger:

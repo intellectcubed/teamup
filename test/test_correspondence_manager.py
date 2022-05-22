@@ -4,6 +4,8 @@ import common.date_utils as date_utils
 import time
 import boto3
 from common.correspondence_manager import CorrespondenceManager
+from common.utils import NotificationCategory
+
 
 """
 Tests function that sends email in check_coverage.py
@@ -13,8 +15,8 @@ python -m test.test_correspondence_manager
 """
 
 agency = 'test_agency'
-category_shift = 'shift_notification'
-category_error = 'error_notification'
+category_shift = NotificationCategory.SHIFT_NOTIFICATION
+category_error = NotificationCategory.ERROR_NOTIFICATION
 recepients = ['george@yahoo.com', 'neal@yahoo.com', 'lou@gmail.com']
 recepients1 = ['thelma@yahoo.com', 'louise@yahoo.com']
 recepients2 = ['birds@hmail', 'turtles@tmail.com']
@@ -31,6 +33,8 @@ schedule_notification_table = dynamodb.Table('schedule_notifications')
 shift_date_1_str = datetime.datetime.strftime(date_utils.key_to_date('2022010218') , date_utils.HOUR_KEY_FMT)
 shift_date_2_str = datetime.datetime.strftime(date_utils.key_to_date('2022010318') , date_utils.HOUR_KEY_FMT)
 
+report_type = 'duty_shift'
+
 summary1 = {"Ryan Ross": 6, "Jim Ross": 6, "Vishnu Chennapragada": 6, "Doris Zampella": 12, "George Nowakowski": 6, "Ian Smoke": 6}
 summary2 = {"George Nowakowski": 12, "Sydroy Morgan": 12}
 
@@ -45,12 +49,12 @@ def setup_scenarios():
         return 
 
     # For scenario_2
-    create_sent(agency, category_shift, recip1_summary, shift_date_1_str, recepients1, '2020-01-01')
-    create_sent(agency, category_shift, recip2_summary, shift_date_1_str, recepients2, '2020-01-02')
-    create_sent(agency, category_shift, recip3_summary, shift_date_1_str, recepients3, '2020-01-03')
+    create_sent(agency, report_type, category_shift, recip1_summary, shift_date_1_str, recepients1, '2020-01-01')
+    create_sent(agency, report_type, category_shift, recip2_summary, shift_date_1_str, recepients2, '2020-01-02')
+    create_sent(agency, report_type, category_shift, recip3_summary, shift_date_1_str, recepients3, '2020-01-03')
     
-    create_sent(agency, category_error, recip3_summary, shift_date_1_str, recepients3, '2020-01-03') # For shift 1, error notification sent on 2020-01-03
-    create_sent(agency, category_error, recip3_summary, shift_date_2_str, recepients3, '2020-01-04') # For shift2, error notification sent today
+    create_sent(agency, report_type, category_error, recip3_summary, shift_date_1_str, recepients3, '2020-01-03') # For shift 1, error notification sent on 2020-01-03
+    create_sent(agency, report_type, category_error, recip3_summary, shift_date_2_str, recepients3, '2020-01-04') # For shift2, error notification sent today
 
 
 
@@ -59,8 +63,8 @@ def setup_scenarios():
     print('Scenarios setup')
 
 
-def create_sent(agency, category, summary, date_str, recipients, override_date_sent=None):
-    key, date_saved = correspondence_manager.save_notification_sent(agency, category, summary, date_str, recipients, override_send_date=override_date_sent)
+def create_sent(agency, report_type, category, summary, date_str, recipients, override_date_sent=None):
+    key, date_saved = correspondence_manager.save_notification_sent(agency, report_type, category, summary, date_str, recipients, override_send_date=override_date_sent)
     keys_created.append((key, date_saved))
 
 
@@ -85,7 +89,7 @@ def scenario_1():
     # correspondence_manager.get_command_arguments()
 
     shift_date_0_str = datetime.datetime.strftime(date_utils.key_to_date('2022010100') , date_utils.HOUR_KEY_FMT)
-    assert correspondence_manager.was_notification_sent(agency, category_error, recip_summary, shift_date_0_str, list(recip_summary.keys())) == False, 'No error notification sent for shift_date_0_str, recepients'
+    assert correspondence_manager.was_notification_sent(agency, category_error, report_type, recip_summary, shift_date_0_str, list(recip_summary.keys())) == False, 'No error notification sent for shift_date_0_str, recepients'
 
     print('Scenario 1 Pass')
 
@@ -96,8 +100,8 @@ def scenario_2():
     # sys.argv = ["prog", "--headless", '--send_email']
     # args = correspondence_manager.get_command_arguments()
 
-    assert correspondence_manager.was_notification_sent(agency, category_shift, recip_summary, shift_date_1_str, list(recip_summary.keys())) == False, 'shift for date1, recipients should already exist, do not send'
-    assert correspondence_manager.was_notification_sent(agency, category_error, recip_summary, shift_date_1_str, list(recip_summary.keys())) == False, 'error for date1, recipients should already exist, do not send'
+    assert correspondence_manager.was_notification_sent(agency, category_shift, report_type, recip_summary, shift_date_1_str, list(recip_summary.keys())) == False, 'shift for date1, recipients should already exist, do not send'
+    assert correspondence_manager.was_notification_sent(agency, category_error, report_type, recip_summary, shift_date_1_str, list(recip_summary.keys())) == False, 'error for date1, recipients should already exist, do not send'
 
     print('Scenario 2 Pass')
 
@@ -111,13 +115,13 @@ def scenario_3():
     # correspondence_manager.get_command_arguments()
 
     # recepients same as first record (ok to send)
-    assert correspondence_manager.was_notification_sent(agency, category_shift, recip1_summary, shift_date_1_str, recepients1) == False
+    assert correspondence_manager.was_notification_sent(agency, category_shift, report_type, recip1_summary, shift_date_1_str, recepients1) == False
 
     # recepients same as second record (ok to send)
-    assert correspondence_manager.was_notification_sent(agency, category_shift, recip2_summary, shift_date_1_str, recepients2) == False
+    assert correspondence_manager.was_notification_sent(agency, category_shift, report_type, recip2_summary, shift_date_1_str, recepients2) == False
 
     # recepients same as third record (not to send)
-    assert correspondence_manager.was_notification_sent(agency, category_shift, recip3_summary, shift_date_1_str, recepients3) == True
+    assert correspondence_manager.was_notification_sent(agency, category_shift, report_type, recip3_summary, shift_date_1_str, recepients3) == True
 
     print('Scenario 3 Pass')
 
@@ -130,10 +134,10 @@ def scenario_3_2():
 
 
     # recepients same as third record (not to send)
-    assert correspondence_manager.was_notification_sent(agency, category_shift, recip3_summary, shift_date_1_str, recepients3) == True
+    assert correspondence_manager.was_notification_sent(agency, category_shift, report_type, recip3_summary, shift_date_1_str, recepients3) == True
 
     # same recipients, same date, but different shift start (ok to send)
-    assert correspondence_manager.was_notification_sent(agency, category_shift, recip2_summary, shift_date_morning_str, recepients2) == False
+    assert correspondence_manager.was_notification_sent(agency, category_shift, report_type, recip2_summary, shift_date_morning_str, recepients2) == False
 
     print('Scenario 3_2 Pass')
     
@@ -146,8 +150,8 @@ def scenario_4():
     # sys.argv = ["prog", '--headless', '--send_email']
     # correspondence_manager.get_command_arguments()
 
-    assert correspondence_manager.was_notification_sent(agency, category_error, recip_summary, shift_date_1_str, recepients) == False, 'errors should be sent once per day'
-    assert correspondence_manager.was_notification_sent(agency, category_error, recip_summary, shift_date_2_str, recepients) == False, 'errors should be sent once per day'
+    assert correspondence_manager.was_notification_sent(agency, category_error, report_type, recip_summary, shift_date_1_str, recepients) == False, 'errors should be sent once per day'
+    assert correspondence_manager.was_notification_sent(agency, category_error, report_type, recip_summary, shift_date_2_str, recepients) == False, 'errors should be sent once per day'
 
     print('Scenario 4 Pass')
 
@@ -161,11 +165,11 @@ def scenario_5():
     # sys.argv = ["prog", "--headless", '--send_email']
     # args = correspondence_manager.get_command_arguments()
 
-    assert correspondence_manager.was_notification_sent(agency, category_shift, recip3_summary, shift_date_1_str, recepients3) == True
+    assert correspondence_manager.was_notification_sent(agency, category_shift, report_type, recip3_summary, shift_date_1_str, recepients3) == True
 
     new_recepients = recepients3[:]
     new_recepients.append('amy_webb@hoo.com')
-    assert correspondence_manager.was_notification_sent(agency, category_shift, new_recepients, shift_date_1_str, recepients) == False
+    assert correspondence_manager.was_notification_sent(agency, category_shift, report_type, new_recepients, shift_date_1_str, recepients) == False
 
     print('Scenario 5 Pass')
 
@@ -201,19 +205,19 @@ def scenario_6():
     shift_8_recipients = list(shift_8_crew.keys())
 
 
-    create_sent(agency, category_shift, shift_7_crew, shift_date_7_str, shift_7_recipients, '2020-01-06') 
-    create_sent(agency, category_shift, shift_8_crew, shift_date_8_str, shift_8_recipients, '2020-01-06') 
+    create_sent(agency, report_type, category_shift, shift_7_crew, shift_date_7_str, shift_7_recipients, '2020-01-06') 
+    create_sent(agency, report_type, category_shift, shift_8_crew, shift_date_8_str, shift_8_recipients, '2020-01-06') 
 
-    assert correspondence_manager.was_notification_sent(agency, category_shift, shift_7_crew, shift_date_7_str, shift_7_recipients) == True
-    assert correspondence_manager.was_notification_sent(agency, category_shift, shift_8_crew, shift_date_8_str, shift_8_recipients) == True
+    assert correspondence_manager.was_notification_sent(agency, category_shift, report_type, shift_7_crew, shift_date_7_str, shift_7_recipients) == True
+    assert correspondence_manager.was_notification_sent(agency, category_shift, report_type, shift_8_crew, shift_date_8_str, shift_8_recipients) == True
 
     # TODO: Change shift hours
     mod_shift_7_crew = shift_7_crew.copy()
     mod_shift_7_crew['lou'] = 8
     mod_shift_7_crew['sam'] = 6
 
-    assert correspondence_manager.was_notification_sent(agency, category_shift, mod_shift_7_crew, shift_date_7_str, shift_7_recipients) == False
-    assert correspondence_manager.was_notification_sent(agency, category_shift, shift_8_crew, shift_date_8_str, shift_8_recipients) == True
+    assert correspondence_manager.was_notification_sent(agency, category_shift, report_type, mod_shift_7_crew, shift_date_7_str, shift_7_recipients) == False
+    assert correspondence_manager.was_notification_sent(agency, category_shift, report_type, shift_8_crew, shift_date_8_str, shift_8_recipients) == True
 
     print('Scenario 6 Pass')
 

@@ -698,6 +698,7 @@ def get_email_address_from_notes(coverage):
 
 
 def save_email_address(agency, member_name, email_address):
+    print('*** Putting new email address.  Member: {} address: {}'.format(member_name, email_address))
     member_table.put_item(
         Item={
             'agency': agency,

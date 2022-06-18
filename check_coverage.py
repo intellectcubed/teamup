@@ -684,8 +684,7 @@ def get_email_from_db(agency, member_name):
 
 def get_email_address_from_notes(coverage):
     if 'notes' in coverage and \
-        coverage['notes'] is not None and \
-        'email' in coverage['notes']:
+        coverage['notes'] is not None:
 
         lst = re.findall('\S+@\S+', coverage['notes'])
         if len(lst) == 0:

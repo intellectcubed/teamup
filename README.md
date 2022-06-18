@@ -7,7 +7,6 @@ Pull events from teamup calendar and ensure that shifts are covered
 ```
 source ~/Downloads/env/bin/activate
 source secrets.sh
-
 ```
 
 
@@ -22,14 +21,13 @@ stored in **prod.env** in the format: ```VARIABLE=VALUE```
 |send_email|[True, False] Should an email be sent?|False|
 |headless|[True, False] Should the script be headless?|False|
 
+---
+## Testing check_coverage:
+python-lambda-local -f lambda_handler check_coverage.py ./triggers/martinsville_trigger.json
 
-## Sample Command line
-python check_coverage.py
-python check_coverage.py --start_date 2021-12-01 --end_date 2021-12-31 // Dont send email
-python check_coverage.py --start_date 2021-12-01 --end_date 2021-12-31 --send_email
-
-### When running on server (headless)
-python check_coverage.py --send_email --headless
+### Or to test in the test environment:
+python-lambda-local -f lambda_handler check_coverage.py ./triggers/squadsentry_trigger.json
+--- 
 
 ## Sending email:
 ### Avoid multiple emails

@@ -26,35 +26,6 @@ import boto3
 from boto3.dynamodb.conditions import Key
 
 
-# from dataclasses import dataclass
-
-# @dataclass
-# class MissingRange:
-#     start_dt: datetime.datetime
-#     end_dt: datetime.datetime
-#     missing_crew: dict
-
-# @dataclass
-# class Shift:
-#     start_dt: datetime.datetime
-#     end_dt: datetime.datetime
-#     coverage_level: str
-#     coverage_offered: list
-#     coverage_required: list
-#     coverage_missing: list
-#     coverage_warnings: list
-
-# @dataclass
-# class CoverageOffered:
-#     start_dt: datetime.datetime
-#     end_dt: datetime.datetime
-#     coverage_level: str
-#     coverage_offered: list
-#     coverage_required: list
-#     coverage_missing: list
-#     coverage_warnings: list
- 
-
 # Global configuration
 run_config: RunConfig
 
@@ -720,10 +691,9 @@ def get_email_address_from_notes(coverage):
         if len(lst) == 0:
             return
 
-        email_address = lst[0]
-        if '</p>' in email_address:
-            email_address = email_address[:-4]
-
+        # Remove anything before the colon: for example: "email:xxx.yy.com"
+        # Remove <p></p> if they are there
+        email_address = lst[0][lst[0].find(':')+1:].replace('<p>', '').replace('</p>', '')
         return email_address
 
 
@@ -787,6 +757,7 @@ def process(start_date, end_date):
     process_html_errors(run_config.agency, run_config.run_trigger.report_type, html_errors, run_config.email_recipients.shift_error_receipents)
 
     final_report_map = report_shifts(start_date, end_date, errors)
+    print('Final report map: '.format(json.dumps(final_report_map)))
     html_map = html_formatter.format_html_shift_report(final_report_map)
     process_html_results(run_config.agency, run_config.run_trigger.report_type, html_map, final_report_map, run_config.email_recipients.admin_email)
 
@@ -826,6 +797,7 @@ def lambda_handler(event, context):
     end_date = (datetime.datetime.now() + datetime.timedelta(days=run_config.agency_settings.check_errors_within_days)).strftime(date_utils.API_DATE_FORMAT_YMD)
 
     try:
+        print('Checking coverage for: {} - {}'.format(start_date, end_date))
         process(start_date, end_date)
     except Exception as e:
         print('WTF, I got an exception!!!!')

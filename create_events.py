@@ -50,16 +50,25 @@ test_event_ids_folder = 'test_cases/event_ids'
 ```
 source ~/Downloads/env/bin/activate
 source secrets.sh
-
 ```
 -------------------------------------------------------------------------------------------------------------------------
 # Coverage Required (from collab calendar)
 ## Download calendar (if creating collaborative events)
 Go to Google Docs (Collaborative Spreadsheet) - click on the tab for the month and do a "Download as CSV" 
 
+# ============================
+# S P R E A D S H E E T
+# ============================
 ### To create events (Coverage required from Collaborative Spreadsheet): 
 python3 create_events.py --calendar coverage_required --spreadsheet --year 2022 --month 6 --source_file '/Users/gnowakow/Downloads/Central Somerset EMS Collaborative Schedule 2022 - June.csv' --trigger_file ./triggers/martinsville_trigger.json
 
+# ============================
+# R E G U L A R S
+# ============================
+# Coverage Offered (defaults using the "regulars" csv)
+python3 create_events.py --calendar coverage_offered --default_coverage --month 6 --year 2022 --trigger_file ./triggers/martinsville_trigger.json --preview
+
+-------------------------------------------------------------------------------------------------------------------------
 ### To create events using a file (recurring or individual):
 python3 create_events.py --calendar coverage_required --month 6 --year 2022 --auto_populate_shifts --source_file './shifts/day_of_week_required.csv' --trigger_file ./triggers/martinsville_trigger.json
 
@@ -84,9 +93,6 @@ python3 create_events.py --calendar coverage_required --source_file /Users/gnowa
 Expected input for coverage_required calendar: [start_dt, end_dt, title]
 Example: 2022-02-01T18:00:00,2022-02-02T06:00:00,MRS Duty: Covering 34 (Green Knoll) and 35 (Finderne)
 
--------------------------------------------------------------------------------------------------------------------------
-# Coverage Offered (defaults using the "regulars" csv)
-python3 create_events.py --calendar coverage_offered --default_coverage --month 6 --year 2022 --trigger_file ./triggers/martinsville_trigger.json --preview
 -------------------------------------------------------------------------------------------------------------------------
 # Coverage Offered (from your own .csv)
 ### To create events (Coverage offered):

@@ -15,7 +15,8 @@ agency_map = {
     'manville': '42',
     'martinsville': '43',
     'somerville': '54',
-    'bradley gardens': '39'
+    'bradley gardens': '39',
+    'squadsentry': '54'
 }
 
 @dataclass
@@ -40,6 +41,7 @@ class EmailConfig:
     email_account: str
     email_password: str
     smtp_server: str
+    developer_email_address: str
 
 @dataclass
 class EmailRecipients:
@@ -102,7 +104,8 @@ def email_config_from_json(config_j):
             config_j['from_email_address'],
             config_j['email_account'],
             config_j['email_password'],
-            config_j['smtp_server'])
+            config_j['smtp_server'],
+            'gmn314@yahoo.com')
 
 def teamup_config_from_json(config_j):
     return TeamupConfig(

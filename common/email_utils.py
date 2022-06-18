@@ -15,11 +15,10 @@ class EmailUtil:
 
     def send_html_email(self, to_emails, cc_list, subject, body):
         if self.is_test_mode:
-            print('TestMode: Fake Sending email to: {}'.format(to_emails))
-            return
+            print('TestMode: Overriding email to: {}'.format(self.email_config.developer_email_address))
 
-        # print('Overriding to_emails {} with {}'.format(to_emails, "gmn314@yahoo.com"))
-        # to_emails = ['gmn314@yahoo.com']
+            to_emails = [self.email_config.developer_email_address]
+            cc_list = []
 
         # Create the container (outer) email message.
         msg = MIMEMultipart()
@@ -44,8 +43,10 @@ class EmailUtil:
 
     def send_email(self, to_emails, cc_list, subject, body):
         if self.is_test_mode:
-            print('Test Mode: Fake Sending email to: {} Subject: {}, Body: {}'.format(to_emails, subject, body))
-            return
+            print('TestMode: Overriding email to: {}'.format(self.email_config.developer_email_address))
+
+            to_emails = [self.email_config.developer_email_address]
+            cc_list = []
 
         # Create the container (outer) email message.
         msg = MIMEText(body)

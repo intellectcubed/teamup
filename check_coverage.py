@@ -828,8 +828,8 @@ def regression(event, start_date, end_date):
 
 
 ## Should not run from command line, but should use 
-# python-lambda-local -f lambda_handler check_coverage.py ./triggers/martinsville_trigger.json
-# python-lambda-local -f lambda_handler check_coverage.py ./triggers/squadsentry_trigger.json
+# python-lambda-local -f lambda_handler check_coverage.py ./triggers/martinsville_trigger.json -t 10
+# python-lambda-local -f lambda_handler check_coverage.py ./triggers/squadsentry_trigger.json -t 10
 
 # if __name__ == '__main__':
 #     agency = 'martinsville'

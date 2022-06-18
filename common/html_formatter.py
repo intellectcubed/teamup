@@ -47,7 +47,7 @@ def format_html_shift_report(final_report_map):
 
         shift_content = '<h2>{}</h2>'.format(utils.create_shift_name(shift))
         if 'title' in shift:
-            shift_content = '<h2>{}</h2>'.format(shift['title'])
+            shift_content += '<h3>{}</h3>'.format(shift['title'])
 
         shift_content += '<h3>Shift Times: {} - {}</h3>'.format(date_utils.date_simple_format(shift['start_dt']), date_utils.date_simple_format(shift['end_dt']))
         shift_table = '<table>'
